@@ -12,7 +12,7 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let header = row![
         text("Move").width(Length::FillPortion(2)).size(13),
-        text("Eng Q").width(Length::FillPortion(2)).size(13),
+        text("Policy").width(Length::FillPortion(2)).size(13),
         text("Pract Q").width(Length::FillPortion(2)).size(13),
         text("Delta").width(Length::FillPortion(2)).size(13),
         text("Visits").width(Length::FillPortion(2)).size(13),
@@ -25,9 +25,9 @@ pub fn view<'a>(
     for info in moves {
         let is_selected = selected_move == Some(&info.uci_move);
 
-        let engine_q_str = info
-            .engine_q
-            .map(|q| format!("{:.3}", q))
+        let policy_str = info
+            .engine_policy
+            .map(|p| format!("{:.1}%", p))
             .unwrap_or_else(|| "-".to_string());
 
         let delta_str = info
@@ -47,7 +47,7 @@ pub fn view<'a>(
 
         let move_row = row![
             text(&info.uci_move).width(Length::FillPortion(2)).size(13),
-            text(engine_q_str).width(Length::FillPortion(2)).size(13),
+            text(policy_str).width(Length::FillPortion(2)).size(13),
             text(format!("{:.3}", info.practical_q))
                 .width(Length::FillPortion(2))
                 .size(13),

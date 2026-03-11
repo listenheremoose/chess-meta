@@ -31,7 +31,7 @@ pub struct Config {
     pub safety: f64,
 
     // ── Search budget ──────────────────────────────────────────────────
-    pub max_iterations: u64,
+    pub max_nodes: u64,
 
     // ── Candidate selection ────────────────────────────────────────────
     pub engine_top_n: usize,
@@ -67,7 +67,7 @@ impl Default for Config {
 
             safety: 0.2,
 
-            max_iterations: 5000,
+            max_nodes: 150_000,
 
             engine_top_n: 3,
             maia_top_n: 5,
@@ -111,10 +111,7 @@ impl Config {
     }
 
     fn config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("chess-meta")
-            .join("settings.toml")
+        PathBuf::from("settings.toml")
     }
 }
 
@@ -138,7 +135,7 @@ mod tests {
         assert_eq!(config.engine_nodes, 1);
         assert!((config.contempt - 0.6).abs() < 0.001);
         assert!((config.safety - 0.2).abs() < 0.001);
-        assert_eq!(config.max_iterations, 5000);
+        assert_eq!(config.max_nodes, 150_000);
         assert_eq!(config.engine_top_n, 3);
         assert_eq!(config.maia_top_n, 5);
         assert_eq!(config.nn_cache_size_mb, 512);
@@ -178,7 +175,7 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
         assert!((restored.cpuct_init - config.cpuct_init).abs() < 0.001);
-        assert_eq!(restored.max_iterations, config.max_iterations);
+        assert_eq!(restored.max_nodes, config.max_nodes);
         assert_eq!(restored.engine_top_n, config.engine_top_n);
     }
 
@@ -186,11 +183,11 @@ mod tests {
     fn config_deserializes_with_missing_fields_using_defaults() {
         let partial_toml = r#"
             lc0_path = "/usr/bin/lc0"
-            max_iterations = 10000
+            max_nodes = 200000
         "#;
         let config: Config = toml::from_str(partial_toml).unwrap();
         assert_eq!(config.lc0_path, "/usr/bin/lc0");
-        assert_eq!(config.max_iterations, 10000);
+        assert_eq!(config.max_nodes, 200_000);
         // Other fields should have defaults
         assert!((config.cpuct_init - 1.5).abs() < 0.001);
         assert_eq!(config.engine_top_n, 3);

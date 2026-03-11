@@ -241,7 +241,7 @@ Terminal nodes are never expanded. Their value is exact and fixed. They still ac
 ### Stopping criteria
 
 Currently implemented:
-- Iteration count >= max_iterations (default 5000)
+- Tree node count >= max_nodes (default 150000)
 - User requests pause (cancellation via UI)
 
 Future (not yet implemented):

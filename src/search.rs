@@ -285,12 +285,11 @@ pub fn backpropagate(tree: &mut SearchTree, leaf_id: u64, value_white: f64) {
 /// Returns (uci_move, blended_prior) pairs.
 pub fn candidate_moves_max(
     engine_policy: &HashMap<String, f32>,
-    engine_q_values: &HashMap<String, f32>,
     maia_policy: &HashMap<String, f32>,
     config: &Config,
 ) -> Vec<(String, f64)> {
-    // Top N engine moves by Q-value (objectively strongest)
-    let mut engine_sorted: Vec<_> = engine_q_values.iter().collect();
+    // Top N engine moves by policy (NN's prior for move strength)
+    let mut engine_sorted: Vec<_> = engine_policy.iter().collect();
     engine_sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     let engine_top: Vec<&String> = engine_sorted
         .iter()
@@ -368,6 +367,10 @@ pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo
 
     let is_white = is_white_to_move_from_node(root);
 
+    let engine_position_value = root.wdl.map(|(w, d, _l)| {
+        w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0
+    });
+
     let mut move_infos: Vec<RootMoveInfo> = root
         .children
         .iter()
@@ -381,9 +384,8 @@ pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo
             let q_white = child.q_value();
             let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-            // Per-move engine Q: lc0 Q in [-1, 1] → [0, 1]
-            let engine_q = root.engine_q_values.as_ref().and_then(|q_vals| {
-                lookup_castling_aware(&uci, q_vals).map(|q| (q as f64 + 1.0) / 2.0)
+            let engine_pol = root.engine_policy.as_ref().and_then(|pol| {
+                lookup_castling_aware(&uci, pol).map(|p| p as f64)
             });
 
             // Worst-case: minimum Q among likely opponent responses
@@ -392,13 +394,13 @@ pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo
             // Practical Q: blend expected with worst-case
             let practical_q = (1.0 - config.safety) * q_stm + config.safety * worst_case;
 
-            let delta = engine_q.map(|eq| practical_q - eq);
+            let delta = engine_position_value.map(|ev| practical_q - ev);
 
             Some(RootMoveInfo {
                 uci_move: uci,
                 node_id: child_id,
                 visits,
-                engine_q,
+                engine_policy: engine_pol,
                 practical_q,
                 delta,
                 q_white,
@@ -422,6 +424,13 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
     let root = tree.root();
     let is_white = is_white_to_move_from_node(root);
 
+    // Position-level engine value (from WDL) in side-to-move perspective [0, 1].
+    // Used for delta: how much does our practical Q differ from the engine's position eval?
+    let engine_position_value = root.wdl.map(|(w, d, _l)| {
+        // WDL stored as-is from lc0 (side-to-move perspective)
+        w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0
+    });
+
     let mut move_infos: Vec<RootMoveInfo> = root
         .children
         .iter()
@@ -432,10 +441,9 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
             let q_white = child.q_value();
             let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-            // Per-move engine Q from root's engine eval.
-            // lc0 Q is in [-1, 1] (side-to-move perspective); convert to [0, 1].
-            let engine_q = root.engine_q_values.as_ref().and_then(|q_vals| {
-                lookup_castling_aware(&uci, q_vals).map(|q| (q as f64 + 1.0) / 2.0)
+            // Engine policy percentage for this move
+            let engine_pol = root.engine_policy.as_ref().and_then(|pol| {
+                lookup_castling_aware(&uci, pol).map(|p| p as f64)
             });
 
             let worst_case = if visits > 0 {
@@ -444,13 +452,16 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
                 q_stm
             };
             let practical_q = (1.0 - config.safety) * q_stm + config.safety * worst_case;
-            let delta = engine_q.map(|eq| practical_q - eq);
+
+            // Delta: how much does our practical Q differ from the position's engine eval?
+            // Positive delta = move performs better against humans than the engine expects.
+            let delta = engine_position_value.map(|ev| practical_q - ev);
 
             Some(RootMoveInfo {
                 uci_move: uci,
                 node_id: child_id,
                 visits,
-                engine_q,
+                engine_policy: engine_pol,
                 practical_q,
                 delta,
                 q_white,
@@ -475,8 +486,10 @@ pub struct RootMoveInfo {
     pub uci_move: String,
     pub node_id: u64,
     pub visits: u64,
-    pub engine_q: Option<f64>,
+    /// Engine policy percentage for this move (0-100 from NN).
+    pub engine_policy: Option<f64>,
     pub practical_q: f64,
+    /// Difference between practical Q and position's engine eval.
     pub delta: Option<f64>,
     pub q_white: f64,
     pub worst_case: f64,
@@ -863,11 +876,6 @@ mod tests {
         engine_policy.insert("d2d4".to_string(), 30.0);
         engine_policy.insert("g1f3".to_string(), 10.0);
 
-        let mut engine_q = HashMap::new();
-        engine_q.insert("e2e4".to_string(), 0.06f32);
-        engine_q.insert("d2d4".to_string(), 0.05);
-        engine_q.insert("g1f3".to_string(), 0.04);
-
         let mut maia = HashMap::new();
         maia.insert("e2e4".to_string(), 40.0f32); // Overlap with engine
         maia.insert("d2d4".to_string(), 35.0); // Overlap
@@ -876,7 +884,7 @@ mod tests {
         maia.insert("c2c4".to_string(), 4.0);
 
         let config = Config::default();
-        let candidates = candidate_moves_max(&engine_policy, &engine_q, &maia, &config);
+        let candidates = candidate_moves_max(&engine_policy, &maia, &config);
 
         // 3 engine + 5 maia but e2e4, d2d4, g1f3 overlap → 5 unique
         assert_eq!(candidates.len(), 5);
@@ -891,14 +899,12 @@ mod tests {
     fn max_candidates_priors_sum_to_one() {
         let mut engine_policy = HashMap::new();
         engine_policy.insert("e2e4".to_string(), 50.0f32);
-        let mut engine_q = HashMap::new();
-        engine_q.insert("e2e4".to_string(), 0.06f32);
         let mut maia = HashMap::new();
         maia.insert("e2e4".to_string(), 80.0f32);
         maia.insert("d2d4".to_string(), 20.0);
 
         let config = Config::default();
-        let candidates = candidate_moves_max(&engine_policy, &engine_q, &maia, &config);
+        let candidates = candidate_moves_max(&engine_policy, &maia, &config);
 
         let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
         assert!((sum - 1.0).abs() < 0.001);
@@ -908,13 +914,11 @@ mod tests {
     fn max_candidates_blends_engine_and_maia_priors() {
         let mut engine_policy = HashMap::new();
         engine_policy.insert("e2e4".to_string(), 100.0f32); // 100% engine policy
-        let mut engine_q = HashMap::new();
-        engine_q.insert("e2e4".to_string(), 0.1f32);
         let mut maia = HashMap::new();
         maia.insert("e2e4".to_string(), 100.0f32); // 100% maia policy
 
         let config = Config::default(); // alpha = 0.7
-        let candidates = candidate_moves_max(&engine_policy, &engine_q, &maia, &config);
+        let candidates = candidate_moves_max(&engine_policy, &maia, &config);
 
         // Only one move — prior should be 1.0 after normalization
         assert_eq!(candidates.len(), 1);

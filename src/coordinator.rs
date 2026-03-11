@@ -171,8 +171,12 @@ fn run_mcts(
     let mut q_history: Vec<(u64, f64)> = Vec::new();
     let update_interval = 50; // Send snapshot every N iterations
 
-    for iteration in 0..config.max_iterations {
+    let mut iteration: u64 = 0;
+    loop {
         if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if tree.node_count() as u64 >= config.max_nodes {
             break;
         }
 
@@ -197,9 +201,11 @@ fn run_mcts(
 
         // 3. BACKPROPAGATE
         backpropagate(&mut tree, leaf_id, value);
+        iteration += 1;
 
         // 4. Send periodic updates to UI
-        if (iteration + 1) % update_interval as u64 == 0 || iteration == config.max_iterations - 1 {
+        let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
+        if iteration % update_interval as u64 == 0 || at_node_limit {
             let elapsed = start_time.elapsed().as_secs_f64();
             let moves = root_move_infos(&tree, &config);
             let best = moves.first().map(|m| m.uci_move.clone());
@@ -216,12 +222,12 @@ fn run_mcts(
             let tree_snap = build_tree_snapshot(&tree, 10); // min 10 visits for tree view
 
             let snapshot = SearchSnapshot {
-                iteration: iteration + 1,
+                iteration,
                 elapsed_secs: elapsed,
                 root_moves: moves,
                 best_move: best,
                 node_count: tree.node_count(),
-                iterations_per_sec: (iteration + 1) as f64 / elapsed.max(0.001),
+                iterations_per_sec: iteration as f64 / elapsed.max(0.001),
                 best_move_history: best_move_history.clone(),
                 q_history: q_history.clone(),
                 tree_snapshot: Some(tree_snap),
@@ -254,6 +260,13 @@ fn expand_and_evaluate(
         )
     };
 
+    // Determine side to move from move sequence (even count = White)
+    let white_to_move = if move_seq.is_empty() {
+        true
+    } else {
+        move_seq.split_whitespace().count() % 2 == 0
+    };
+
     // Check for terminal
     if let Some(tv) = terminal {
         return Ok(tv);
@@ -263,7 +276,8 @@ fn expand_and_evaluate(
     if already_expanded {
         let leaf = tree.get(leaf_id).ok_or("Node not found")?;
         if let Some(wdl) = leaf.wdl {
-            return Ok(wdl.0 as f64 / 1000.0 + config.contempt * wdl.1 as f64 / 1000.0);
+            let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
+            return Ok(eval.value_white(config.contempt, white_to_move));
         }
     }
 
@@ -303,8 +317,8 @@ fn expand_and_evaluate(
         policy
     };
 
-    // Compute value from White's perspective
-    let value = engine_eval.value_white(config.contempt);
+    // Compute value from White's perspective (flip WDL when Black to move)
+    let value = engine_eval.value_white(config.contempt, white_to_move);
 
     // Store eval data on the node
     {
@@ -317,7 +331,7 @@ fn expand_and_evaluate(
 
     // Expand children based on node type
     let candidates = match node_type {
-        NodeType::Max => candidate_moves_max(&engine_eval.policy, &engine_eval.q_values, &maia_policy, config),
+        NodeType::Max => candidate_moves_max(&engine_eval.policy, &maia_policy, config),
         NodeType::Chance => candidate_moves_chance(&maia_policy, config),
     };
 

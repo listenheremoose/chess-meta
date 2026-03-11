@@ -1,0 +1,3 @@
+lc0_path = 'C:\chess\engines\lc0-v0.32.1-BT4-332\lc0.exe'
+engine_weights_path = 'C:\chess\neural-networks\BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz'
+maia_weights_path = 'C:\chess\neural-networks\maia-1600.pb.gz'

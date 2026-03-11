@@ -270,12 +270,6 @@ fn candidate_moves_max_blends_policies() {
         ("c2c4".into(), 20.0),
     ]
     .into();
-    let engine_q: HashMap<String, f32> = [
-        ("e2e4".into(), 0.55),
-        ("d2d4".into(), 0.52),
-        ("c2c4".into(), 0.48),
-    ]
-    .into();
     let maia_policy: HashMap<String, f32> = [
         ("e2e4".into(), 40.0),
         ("d2d4".into(), 25.0),
@@ -285,7 +279,7 @@ fn candidate_moves_max_blends_policies() {
     ]
     .into();
 
-    let candidates = candidate_moves_max(&engine_policy, &engine_q, &maia_policy, &config);
+    let candidates = candidate_moves_max(&engine_policy, &maia_policy, &config);
 
     // Should include both engine top moves and Maia top moves (deduped).
     let move_names: Vec<&str> = candidates.iter().map(|(m, _)| m.as_str()).collect();

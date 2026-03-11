@@ -37,7 +37,7 @@ All tunable constants with defaults, valid ranges, and rationale.
 
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
-| max_iterations | 5000 | 100 - 100000 | Maximum MCTS iterations per search. |
+| max_nodes | 150000 | 1000 - 1000000 | Maximum tree nodes before stopping search. |
 | max_time | none | 1s - ∞ | Wall clock time limit (optional). |
 
 ## Candidate Selection

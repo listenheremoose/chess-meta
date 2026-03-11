@@ -69,7 +69,7 @@ fn engine_eval_and_cache() {
         "policy should contain e2e4 or d2d4"
     );
 
-    let value = eval.value_white(0.6);
+    let value = eval.value_white(0.6, true); // startpos = White to move
     assert!(
         value > 0.3 && value < 0.7,
         "startpos value should be near 0.5, got {value}"
@@ -179,7 +179,7 @@ fn search_tree_with_real_engines() {
     let eval = engine.evaluate("", 1).unwrap();
     let maia_policy = maia.predict("").unwrap();
 
-    let candidates = candidate_moves_max(&eval.policy, &eval.q_values, &maia_policy, &config);
+    let candidates = candidate_moves_max(&eval.policy, &maia_policy, &config);
     assert!(
         candidates.len() >= 3,
         "should have at least 3 candidate moves, got {}",
@@ -239,17 +239,21 @@ fn search_tree_with_real_engines() {
 
         let leaf_seq = leaf.move_sequence.clone();
         let leaf_type = leaf.node_type;
+        let white_to_move = if leaf_seq.is_empty() {
+            true
+        } else {
+            leaf_seq.split_whitespace().count() % 2 == 0
+        };
 
         // 2. Evaluate
         let leaf_eval = engine.evaluate(&leaf_seq, 1).unwrap();
         let leaf_maia = maia.predict(&leaf_seq).unwrap();
-        let value = leaf_eval.value_white(config.contempt);
+        let value = leaf_eval.value_white(config.contempt, white_to_move);
 
         // 3. Expand
         let leaf_candidates = match leaf_type {
             NodeType::Max => candidate_moves_max(
                 &leaf_eval.policy,
-                &leaf_eval.q_values,
                 &leaf_maia,
                 &config,
             ),

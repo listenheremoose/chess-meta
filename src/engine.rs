@@ -15,9 +15,18 @@ pub struct EngineEval {
 
 impl EngineEval {
     /// Compute expected value from White's perspective using V = W/1000 + contempt * D/1000.
-    pub fn value_white(&self, contempt: f64) -> f64 {
-        let (w, d, _l) = self.wdl;
-        w as f64 / 1000.0 + contempt * d as f64 / 1000.0
+    ///
+    /// lc0's WDL is from the side-to-move's perspective, so `white_to_move` must be
+    /// passed to flip W and L when Black is the side to move.
+    pub fn value_white(&self, contempt: f64, white_to_move: bool) -> f64 {
+        let (w, d, l) = self.wdl;
+        if white_to_move {
+            // W = White's wins, L = White's losses
+            w as f64 / 1000.0 + contempt * d as f64 / 1000.0
+        } else {
+            // W = Black's wins (White's losses), L = Black's losses (White's wins)
+            l as f64 / 1000.0 + contempt * d as f64 / 1000.0
+        }
     }
 
     /// Get the top N moves by policy.
@@ -344,7 +353,7 @@ mod tests {
             policy: HashMap::new(),
             q_values: HashMap::new(),
         };
-        let v = eval.value_white(0.6);
+        let v = eval.value_white(0.6, true);
         assert!((v - 0.6).abs() < 0.001); // 300/1000 + 0.6 * 500/1000 = 0.3 + 0.3 = 0.6
     }
 
@@ -355,7 +364,7 @@ mod tests {
             policy: HashMap::new(),
             q_values: HashMap::new(),
         };
-        let v = eval.value_white(0.0);
+        let v = eval.value_white(0.0, true);
         assert!((v - 0.3).abs() < 0.001); // 300/1000 + 0 = 0.3
     }
 
@@ -366,7 +375,20 @@ mod tests {
             policy: HashMap::new(),
             q_values: HashMap::new(),
         };
-        let v = eval.value_white(1.0);
+        let v = eval.value_white(1.0, true);
         assert!((v - 1.0).abs() < 0.001); // 0 + 1.0 * 1000/1000 = 1.0
+    }
+
+    #[test]
+    fn value_white_flips_wdl_when_black_to_move() {
+        // WDL from lc0 when Black to move: W=Black wins, D=draw, L=Black loses (=White wins)
+        let eval = EngineEval {
+            wdl: (700, 200, 100), // Black wins 70%, draw 20%, White wins 10%
+            policy: HashMap::new(),
+            q_values: HashMap::new(),
+        };
+        // White's perspective: W_white=100(L), D=200, contempt=0.6
+        let v = eval.value_white(0.6, false);
+        assert!((v - 0.22).abs() < 0.001); // 100/1000 + 0.6 * 200/1000 = 0.1 + 0.12 = 0.22
     }
 }
