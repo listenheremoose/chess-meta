@@ -70,11 +70,6 @@ impl Cache {
 
     pub fn open() -> Result<Self, String> {
         let path = Self::db_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create cache dir: {e}"))?;
-        }
-
         let conn =
             Connection::open(&path).map_err(|e| {
                 log::error!("Failed to open cache DB: {e}");
@@ -208,7 +203,7 @@ impl Cache {
 
         let mut stmt = self.conn
             .prepare(
-                "INSERT INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                "INSERT OR REPLACE INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )
             .map_err(|e| format!("Failed to prepare save statement: {e}"))?;
 
@@ -330,10 +325,7 @@ impl Cache {
     }
 
     fn db_path() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("chess-meta")
-            .join("cache.db")
+        PathBuf::from("cache.db")
     }
 }
 
