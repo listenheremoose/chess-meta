@@ -23,7 +23,11 @@
       "Read(//c/Users/me/.claude/projects/c--code-chess-meta/memory/**)",
       "Bash(find /c/code/chess-meta/tests -name *.rs)",
       "Bash(mkdir -p /c/code/chess-meta/src/search)",
-      "Bash(mkdir -p /c/code/chess-meta/src/coordinator)"
+      "Bash(mkdir -p /c/code/chess-meta/src/coordinator)",
+      "Bash(cargo search:*)",
+      "Bash(for pkg:*)",
+      "Bash(do echo:*)",
+      "Bash(done)"
     ]
   }
 }

@@ -1,4 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use chess_meta::engine::{format_position_cmd, parse_verbose_move_stats};
 

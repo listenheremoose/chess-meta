@@ -63,7 +63,7 @@ impl PositionState {
                             token: token.to_string(),
                             source: format!("{e}"),
                         })?;
-                    chess.play_unchecked(&legal_move);
+                    chess.play_unchecked(legal_move);
 
                     if !move_sequence.is_empty() {
                         move_sequence.push(' ');
@@ -97,7 +97,7 @@ impl PositionState {
             })?;
 
         let mut new_chess = self.chess.clone();
-        new_chess.play_unchecked(&legal_move);
+        new_chess.play_unchecked(legal_move);
 
         let mut new_move_seq = self.move_sequence.clone();
         if !new_move_seq.is_empty() {
@@ -133,7 +133,7 @@ impl PositionState {
 
 /// Format a position as EPD string.
 fn format_epd(chess: &Chess) -> String {
-    Epd::from_position(chess.clone(), shakmaty::EnPassantMode::Legal).to_string()
+    Epd::from_position(chess, shakmaty::EnPassantMode::Legal).to_string()
 }
 
 #[cfg(test)]
