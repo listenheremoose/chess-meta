@@ -104,19 +104,17 @@ Store the Maia distribution on the CHANCE node when it's first expanded. This av
 function SELECT(node):
     if node is terminal:
         return node
-    if node is leaf (unexpanded):
+    if node is leaf (unexpanded or no children):
         return node
     if node.type == MAX:  // our turn
         child = argmax over children of Score(node, child)
         return SELECT(child)
     if node.type == CHANCE:  // opponent turn
-        child = sample from Maia distribution
-        if child not yet in tree:
-            expand child, return child
+        child = sample from children weighted by prior (Maia probability)
         return SELECT(child)
 ```
 
-**Opponent nodes create children on-demand.** Since we sample from Maia's distribution, we may sample a move whose child node doesn't exist yet. In that case, we create it and treat it as the leaf for this iteration.
+All children are created during expansion, so selection simply traverses existing nodes. At CHANCE nodes, children are sampled proportional to their Maia-derived priors (with temperature smoothing and exploration floor applied).
 
 **No UCB at opponent nodes -- and this is correct.** We are modeling the opponent as a stochastic process with a known distribution (Maia). This makes opponent nodes equivalent to "chance nodes" in expectimax / stochastic game trees.
 
@@ -124,16 +122,21 @@ function SELECT(node):
 
 ## 4. Expansion
 
-When selection reaches a leaf node, expand **one child only** (the selected move).
+When selection reaches a leaf node, expand it by creating all candidate children at once.
 
 ### Expansion procedure
 
 1. Selection reaches leaf node `L`.
-2. Evaluate `L` using lc0 engine eval to get `V(L)` (the value) and `P_engine(L, *)` (the policy).
-3. Query Maia for `P_maia(L, *)` (human prediction distribution).
-4. Store on node `L`: the blended prior for each legal move, the Maia distribution, and the eval value.
-5. Backpropagate `V(L)` up the tree.
-6. `L` is now an internal node. Its children are created lazily when selected/sampled in future iterations.
+2. Check for terminal position (checkmate, stalemate, insufficient material). If terminal, return the terminal value immediately — no engine query needed.
+3. Evaluate `L` using lc0 engine eval to get `V(L)` (the value via WDL), `P_engine(L, *)` (the policy), and Q values.
+4. Query Maia for `P_maia(L, *)` (human prediction distribution).
+5. Store on node `L`: engine policy, Maia policy, and WDL.
+6. Create all candidate children immediately:
+   - At MAX nodes: top 3 engine + top 5 Maia (deduped), with blended priors.
+   - At CHANCE nodes: all Maia moves above `maia_min_prob`, with Maia probabilities as priors.
+7. Each child stores its EPD, move sequence, and terminal value (if applicable).
+8. Backpropagate `V(L)` up the tree.
+9. `L` is now an internal node with children ready for selection on the next iteration.
 
 ### First Play Urgency (FPU)
 
@@ -237,17 +240,17 @@ Terminal nodes are never expanded. Their value is exact and fixed. They still ac
 
 ### Stopping criteria
 
-```
-STOP when ANY of:
-  - Iteration count >= max_iterations (default 5000)
-  - Wall clock time >= max_time
-  - Best move unchanged for last 30% of iterations AND Q gap > 0.03
-  - User requests pause
-```
+Currently implemented:
+- Iteration count >= max_iterations (default 5000)
+- User requests pause (cancellation via UI)
+
+Future (not yet implemented):
+- Wall clock time >= max_time
+- Early stop: best move unchanged for last 30% of iterations AND Q gap > 0.03
 
 ---
 
-## 9. Tree Reuse
+## 9. Tree Reuse (not yet implemented)
 
 If we searched position A and then want to search position B = A + move:
 
@@ -258,55 +261,53 @@ If we searched position A and then want to search position B = A + move:
 
 **Invalidation:** If Maia's model is updated (e.g., different rating target), discard the tree.
 
+Currently, each search starts a fresh tree. The SQLite tree_nodes table exists for future persistence/resumption support.
+
 ---
 
 ## Complete MCTS Iteration Pseudocode
 
 ```
 function MCTS_ITERATION(root):
-    // 1. SELECTION
-    path = [root]
+    // 1. SELECTION — traverse tree to a leaf
     node = root
-    while node is expanded and not terminal:
+    while node is expanded and has children and not terminal:
         if node.type == MAX:
-            move = argmax_a(Q_stm(node, a) + C(node) * P(node, a) * sqrt(N(node)) / (1 + N(node, a)))
+            node = argmax child by (Q_stm + C * P * sqrt(N_parent) / (1 + N_child))
             // For unvisited children: Q_stm = parent_Q_stm - fpu_reduction
         else:  // CHANCE
-            move = sample from node.maia_distribution
+            node = sample child weighted by prior (Maia probability)
 
-        if move leads to existing child:
-            node = child(node, move)
-            path.append(node)
-        else:
-            new_node = create_child(node, move)
-            path.append(new_node)
-            node = new_node
-            break
-
-    // 2. EVALUATION
+    // 2. EXPAND & EVALUATE
     if node is terminal:
         V_white = terminal_value(node)
     else:
-        maia_dist = query_maia(node.move_path)  // full move history
-        engine_result = query_engine(node.epd)   // position only, nodes=1
+        engine_result = query_engine(node.epd)   // position only, nodes=1 (check cache first)
+        maia_dist = query_maia(node.move_path)   // full move history (check cache first)
 
         V_white = engine_result.W/1000 + contempt * engine_result.D/1000
 
+        // Create all candidate children
         if node.type == MAX:
-            for each legal move m:
-                P(node, m) = alpha * engine_result.policy(m) + (1-alpha) * maia_dist(m)
+            candidates = top_3_engine + top_5_maia (deduped)
+            for each candidate move m:
+                prior = alpha * engine_result.policy(m) + (1-alpha) * maia_dist(m)
+                create_child(node, m, prior, type=CHANCE)
         else:  // CHANCE
-            node.maia_distribution = apply_temperature_and_floor(maia_dist)
-            for each legal move m:
-                P(node, m) = node.maia_distribution(m)
+            candidates = maia moves above maia_min_prob
+            for each candidate move m:
+                prior = maia_dist(m) (normalized)
+                create_child(node, m, prior, type=MAX)
+
+        node.expanded = true
 
     // 3. BACKPROPAGATION
-    for each node in path:
+    for each node from leaf to root:
         node.N += 1
         node.W_sum += V_white
         node.Q = node.W_sum / node.N
 
-    // 4. PERSIST (periodically)
-    if iteration_count % 100 == 0:
-        flush_cache_to_sqlite()
+    // 4. PERIODIC UI UPDATE
+    if iteration_count % 50 == 0:
+        send snapshot to UI thread via channel
 ```

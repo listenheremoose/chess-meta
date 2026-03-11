@@ -3,6 +3,30 @@
 Single-window iced application. All panels visible simultaneously. The MCTS search runs in a
 background thread; the UI polls for updates and redraws.
 
+## Implementation Status
+
+**Implemented:**
+- Four-panel layout (top bar, left move table, right tree view, bottom progress strip)
+- Position input, Start/Pause/Reset controls, live stats
+- Move comparison table with Engine Q, Practical Q, Delta, Visits columns
+- Move detail view (Q white, worst-case, WDL breakdown)
+- Canvas tree visualization with visit-based sizing and Q-based coloring
+- Best move timeline and Q convergence sparkline
+- Dark theme with color palette
+
+**Not yet implemented:**
+- Saved positions dropdown
+- Settings panel (gear icon) — config is file-based via settings.toml for now
+- Column sorting (click headers)
+- Row highlighting for highest-delta move
+- SAN notation (currently UCI)
+- Inline bar visualization in table
+- Principal variation display in move detail
+- Most likely opponent response in move detail
+- Tree zoom/pan, hover tooltips, click-to-subtree navigation, breadcrumb trail
+- Collapsed branch `+N` indicators
+- Sync between tree click and move table selection
+
 ## Layout
 
 ```
@@ -47,7 +71,7 @@ Scrollable table of root candidate moves (top 3 engine + top 5 Maia, deduped).
 
 | Column | Description |
 |--------|-------------|
-| Move | SAN notation (e.g., Nf3, d4) |
+| Move | UCI notation (e.g., g1f3, d2d4) |
 | Engine Q | Raw engine evaluation [0, 1] |
 | Practical Q | MCTS result against Maia opponents [0, 1] |
 | Delta | Practical - Engine (colored: green positive, red negative) |
@@ -76,7 +100,7 @@ Custom `Canvas` widget drawing the MCTS tree.
 
 ### Node rendering
 
-- **Shape:** Rectangles for MAX nodes (our turn), rounded rectangles for CHANCE nodes (opponent)
+- **Shape:** Rectangles for MAX nodes (our turn), circles for CHANCE nodes (opponent)
 - **Size:** Width proportional to visit count (relative to parent's total visits)
 - **Color:** Gradient based on practical Q. Green = good for us, red = bad. Intensity = confidence (more visits = more saturated)
 - **Label:** SAN move + visit count. For nodes with enough space, also show Q.
@@ -131,24 +155,22 @@ issues, etc.).
 ```
 Background thread                    UI thread (iced)
 ─────────────────                    ────────────────
-MCTS loop runs
-  → updates shared SearchState
-    (behind Arc<Mutex<>>)            polls SearchState every ~100ms
-                                       → reads snapshot of:
-                                         - root children stats
-                                         - tree structure (pruned)
-                                         - progress metrics
-                                       → triggers view redraw
+MCTS loop runs                       iced subscription polls every 100ms
+  → every 50 iterations, sends       → coordinator.poll() drains mpsc channel
+    SearchSnapshot via mpsc channel     → keeps latest snapshot
+                                        → clears canvas caches
+                                        → triggers view redraw
 ```
 
-The `SearchState` struct exposed to the UI contains:
-- Root candidate moves with all stats
-- Flattened tree nodes (pre-pruned by the coordinator based on current threshold)
-- Iteration count, elapsed time, best move history
-- Convergence metrics
+Communication uses an `mpsc` channel (not `Arc<Mutex<>>`). The background thread owns the full MCTS tree and engines. It sends periodic `SearchSnapshot` structs containing:
+- Root candidate moves with all stats (engine Q, practical Q, delta, visits, WDL)
+- Flattened tree nodes (pre-pruned by min-visit threshold)
+- Iteration count, elapsed time, iterations/sec
+- Best move history (for the timeline)
+- Q convergence history (for the sparkline)
 
-The UI never touches the full MCTS tree directly — it reads a pre-computed snapshot that the
-coordinator prepares periodically (every 100 iterations or on pause).
+The UI never touches the full MCTS tree directly — it reads snapshots that the
+coordinator sends every 50 iterations.
 
 ## Color Palette
 

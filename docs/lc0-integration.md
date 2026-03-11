@@ -15,8 +15,9 @@ Both are spawned once and reused across all evaluations. Each communicates via U
 
 ### Initialization
 
-On process spawn, send:
+On process spawn, send UCI init and options. The two processes use slightly different options:
 
+**Engine process:**
 ```
 uci
 setoption name WeightsFile value {weights_path}
@@ -27,6 +28,18 @@ setoption name SmartPruningFactor value 0
 setoption name NNCacheSizeMb value 512
 isready
 ```
+
+**Maia process:**
+```
+uci
+setoption name WeightsFile value {maia_weights_path}
+setoption name VerboseMoveStats value true
+setoption name MultiPV value 500
+setoption name SmartPruningFactor value 0
+isready
+```
+
+Maia doesn't need `UCI_ShowWDL` (we only use its policy) or `NNCacheSizeMb` (its nodes=1 queries don't accumulate cache pressure).
 
 Wait for `readyok` before sending queries.
 
@@ -65,10 +78,15 @@ Since engine evals depend only on the position (not move history), cache by EPD 
 ```sql
 CREATE TABLE engine_cache (
     epd TEXT PRIMARY KEY,
-    result_json TEXT NOT NULL,
-    nodes_searched INTEGER
+    wdl_w INTEGER NOT NULL,
+    wdl_d INTEGER NOT NULL,
+    wdl_l INTEGER NOT NULL,
+    policy_json TEXT NOT NULL,
+    q_values_json TEXT NOT NULL
 );
 ```
+
+WDL is stored as separate integer columns for direct access. Policy and Q values are stored as JSON maps (`{"e2e4": 45.2, "d2d4": 30.1, ...}`).
 
 ### Maia cache (move-sequence-keyed)
 
