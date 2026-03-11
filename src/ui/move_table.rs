@@ -22,7 +22,10 @@ pub fn view<'a>(
 
     let mut rows: Vec<Element<'a, Message>> = vec![header.into()];
 
-    moves.iter().for_each(|info| {
+    let mut sorted_moves: Vec<&RootMoveInfo> = moves.iter().collect();
+    sorted_moves.sort_by(|a, b| b.visits.cmp(&a.visits));
+
+    sorted_moves.iter().for_each(|info| {
         let is_selected = selected_move == Some(&info.uci_move);
 
         let policy_str = match info.engine_policy {
