@@ -95,6 +95,8 @@ impl Engine {
         engine.send("isready")?;
         engine.wait_for("readyok")?;
 
+        log::info!("Engine initialized path={lc0_path} weights={weights_path}");
+
         Ok(engine)
     }
 
@@ -104,6 +106,7 @@ impl Engine {
         // Periodically send ucinewgame to clear lc0 internal tree
         self.query_count += 1;
         if self.query_count % self.ucinewgame_interval == 0 {
+            log::debug!("Engine ucinewgame reset at query_count={}", self.query_count);
             self.send("ucinewgame")?;
             self.send("isready")?;
             self.wait_for("readyok")?;
@@ -150,7 +153,10 @@ impl Engine {
     }
 
     fn send(&mut self, cmd: &str) -> Result<(), String> {
-        writeln!(self.stdin, "{cmd}").map_err(|e| format!("Failed to write to engine: {e}"))?;
+        writeln!(self.stdin, "{cmd}").map_err(|e| {
+            log::error!("Failed to write to engine: {e}");
+            format!("Failed to write to engine: {e}")
+        })?;
         Ok(())
     }
 
@@ -158,8 +164,12 @@ impl Engine {
         let mut line = String::new();
         let bytes = self.reader
             .read_line(&mut line)
-            .map_err(|e| format!("Failed to read from engine: {e}"))?;
+            .map_err(|e| {
+                log::error!("Failed to read from engine: {e}");
+                format!("Failed to read from engine: {e}")
+            })?;
         if bytes == 0 {
+            log::error!("Engine process terminated unexpectedly");
             return Err("Engine process terminated unexpectedly".to_string());
         }
         Ok(line.trim().to_string())

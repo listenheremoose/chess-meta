@@ -53,6 +53,8 @@ impl MaiaEngine {
         engine.send("isready")?;
         engine.wait_for("readyok")?;
 
+        log::info!("Maia initialized path={lc0_path} weights={maia_weights_path}");
+
         Ok(engine)
     }
 
@@ -63,6 +65,7 @@ impl MaiaEngine {
         // Periodically send ucinewgame to clear internal state
         self.query_count += 1;
         if self.query_count % self.ucinewgame_interval == 0 {
+            log::debug!("Maia ucinewgame reset at query_count={}", self.query_count);
             self.send("ucinewgame")?;
             self.send("isready")?;
             self.wait_for("readyok")?;
@@ -98,7 +101,10 @@ impl MaiaEngine {
 
     fn send(&mut self, cmd: &str) -> Result<(), String> {
         writeln!(self.stdin, "{cmd}")
-            .map_err(|e| format!("Failed to write to Maia engine: {e}"))?;
+            .map_err(|e| {
+                log::error!("Failed to write to Maia engine: {e}");
+                format!("Failed to write to Maia engine: {e}")
+            })?;
         Ok(())
     }
 
@@ -106,8 +112,12 @@ impl MaiaEngine {
         let mut line = String::new();
         let bytes = self.reader
             .read_line(&mut line)
-            .map_err(|e| format!("Failed to read from Maia engine: {e}"))?;
+            .map_err(|e| {
+                log::error!("Failed to read from Maia engine: {e}");
+                format!("Failed to read from Maia engine: {e}")
+            })?;
         if bytes == 0 {
+            log::error!("Maia engine process terminated unexpectedly");
             return Err("Maia engine process terminated unexpectedly".to_string());
         }
         Ok(line.trim().to_string())

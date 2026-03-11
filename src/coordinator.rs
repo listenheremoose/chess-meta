@@ -265,9 +265,17 @@ fn run_mcts(
         SearchTree::new(position.epd.clone(), position.move_sequence.clone(), NodeType::Max)
     };
 
+    log::info!(
+        "Search started position={} max_nodes={}",
+        if move_sequence.is_empty() { "startpos" } else { &move_sequence },
+        config.max_nodes
+    );
+
     let start_time = Instant::now();
     let mut best_move_history: Vec<(u64, String)> = Vec::new();
     let mut q_history: Vec<(u64, f64)> = Vec::new();
+    let mut cache_hits: u64 = 0;
+    let mut cache_misses: u64 = 0;
     let update_interval = 50; // Send snapshot every N iterations
 
     // Send an initial snapshot immediately if we resumed a non-trivial tree
@@ -315,6 +323,8 @@ fn run_mcts(
             &mut engine,
             &mut maia,
             cache.as_ref(),
+            &mut cache_hits,
+            &mut cache_misses,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -326,6 +336,17 @@ fn run_mcts(
         // 3. BACKPROPAGATE
         backpropagate(&mut tree, leaf_id, value);
         iteration += 1;
+
+        // Log search milestones every 100 iterations
+        if iteration % 100 == 0 {
+            let moves = root_move_infos(&tree, &config);
+            let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("?");
+            let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+            log::info!(
+                "Search milestone iteration={iteration} best={best} practical_q={best_q:.4} nodes={}",
+                tree.node_count()
+            );
+        }
 
         // 4. Periodic flush to SQLite
         if iteration % config.flush_interval as u64 == 0 {
@@ -373,6 +394,15 @@ fn run_mcts(
         }
     }
 
+    let elapsed = start_time.elapsed().as_secs_f64();
+    let moves = root_move_infos(&tree, &config);
+    let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("none");
+    let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+    log::info!(
+        "Search complete iterations={iteration} best={best} practical_q={best_q:.4} nodes={} elapsed={elapsed:.1}s cache_hits={cache_hits} cache_misses={cache_misses}",
+        tree.node_count()
+    );
+
     // Final save — persist tree state for resumption
     if let Some(c) = &cache {
         match c.save_tree(&tree, &session_id) {
@@ -390,6 +420,8 @@ fn expand_and_evaluate(
     engine: &mut Engine,
     maia: &mut MaiaEngine,
     cache: Option<&Cache>,
+    cache_hits: &mut u64,
+    cache_misses: &mut u64,
 ) -> Result<f64, String> {
     let (epd, move_seq, node_type, terminal, already_expanded) = {
         let leaf = tree.get(leaf_id).ok_or("Node not found")?;
@@ -435,12 +467,14 @@ fn expand_and_evaluate(
     // Get engine eval (check cache first)
     let engine_eval = if let Some(cached) = cache.and_then(|c| c.get_engine_eval(&epd)) {
         let (w, d, l, policy, q_values) = cached;
+        *cache_hits += 1;
         EngineEval {
             wdl: (w, d, l),
             policy,
             q_values,
         }
     } else {
+        *cache_misses += 1;
         let eval = engine.evaluate(&move_seq, config.engine_nodes)?;
         if let Some(c) = cache {
             let _ = c.put_engine_eval(&epd, eval.wdl, &eval.policy, &eval.q_values);
@@ -450,8 +484,10 @@ fn expand_and_evaluate(
 
     // Get Maia prediction (check cache first)
     let maia_policy = if let Some(cached) = cache.and_then(|c| c.get_maia_policy(&move_seq)) {
+        *cache_hits += 1;
         cached
     } else {
+        *cache_misses += 1;
         let policy = maia.predict(&move_seq)?;
         if let Some(c) = cache {
             let _ = c.put_maia_policy(&move_seq, &policy);

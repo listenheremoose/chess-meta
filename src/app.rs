@@ -60,7 +60,10 @@ impl App {
         match message {
             Message::MoveInputChanged(input) => self.move_input = input,
             Message::StartSearch => return self.handle_start_search(),
-            Message::PauseSearch => self.coordinator.stop(),
+            Message::PauseSearch => {
+                log::info!("Search paused");
+                self.coordinator.stop();
+            }
             Message::ResetSearch => self.handle_reset_search(),
             Message::Tick => self.handle_tick(),
         }
@@ -72,6 +75,7 @@ impl App {
             log::warn!("Engine paths not configured");
             return Task::none();
         }
+        log::info!("Search started from UI position={}", if self.move_input.is_empty() { "startpos" } else { &self.move_input });
         self.coordinator
             .start(self.move_input.clone(), self.config.clone());
         self.selected_move = None;
@@ -81,6 +85,7 @@ impl App {
     }
 
     fn handle_reset_search(&mut self) {
+        log::info!("Search reset position={}", if self.move_input.is_empty() { "startpos" } else { &self.move_input });
         self.coordinator.stop();
         self.coordinator.clear_session(&self.move_input);
         self.coordinator.latest_snapshot = None;

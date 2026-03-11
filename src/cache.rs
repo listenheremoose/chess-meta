@@ -76,9 +76,14 @@ impl Cache {
         }
 
         let conn =
-            Connection::open(&path).map_err(|e| format!("Failed to open cache DB: {e}"))?;
+            Connection::open(&path).map_err(|e| {
+                log::error!("Failed to open cache DB: {e}");
+                format!("Failed to open cache DB: {e}")
+            })?;
 
         Self::init_tables(&conn)?;
+
+        log::info!("Cache opened path={}", path.display());
 
         Ok(Self { conn })
     }

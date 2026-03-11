@@ -162,12 +162,16 @@ impl SearchTree {
 /// probability-weighted sampling at CHANCE nodes.
 pub fn select(tree: &SearchTree, config: &Config) -> u64 {
     let mut current = tree.root_id;
+    #[cfg(feature = "search-trace")]
+    let mut depth = 0u32;
 
     loop {
         let node = &tree.nodes[&current];
 
         // If not expanded or terminal, this is the leaf
         if !node.expanded || node.children.is_empty() {
+            #[cfg(feature = "search-trace")]
+            log::trace!("select leaf node_id={current} depth={depth}");
             return current;
         }
 
@@ -179,6 +183,8 @@ pub fn select(tree: &SearchTree, config: &Config) -> u64 {
                 current = select_chance(tree, current, config);
             }
         }
+        #[cfg(feature = "search-trace")]
+        { depth += 1; }
     }
 }
 
@@ -220,11 +226,16 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
         let u = cpuct * child.prior * parent_visits.sqrt() / (1.0 + child_visits);
 
         let score = q + u;
+        #[cfg(feature = "search-trace")]
+        log::trace!("puct child={child_id} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child.prior);
         if score > best_score {
             best_score = score;
             best_child = child_id;
         }
     }
+
+    #[cfg(feature = "search-trace")]
+    log::trace!("puct selected={best_child} score={best_score:.4}");
 
     best_child
 }
@@ -273,6 +284,8 @@ fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
     for (i, &prob) in probs.iter().enumerate() {
         cumulative += prob;
         if r < cumulative {
+            #[cfg(feature = "search-trace")]
+            log::trace!("chance sampled child={} prob={prob:.4}", children[i]);
             return children[i];
         }
     }
@@ -282,6 +295,8 @@ fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
 
 /// Backpropagate a value (from White's perspective) up the tree.
 pub fn backpropagate(tree: &mut SearchTree, leaf_id: u64, value_white: f64) {
+    #[cfg(feature = "search-trace")]
+    log::trace!("backprop leaf={leaf_id} value={value_white:.4}");
     let mut current = Some(leaf_id);
     while let Some(id) = current {
         let node = tree.nodes.get_mut(&id).unwrap();

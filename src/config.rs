@@ -91,10 +91,25 @@ impl Config {
     /// Load config from the standard settings file, or return defaults.
     pub fn load() -> Self {
         let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        let config = match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                log::info!("Config loaded from {}", path.display());
+                toml::from_str(&contents).unwrap_or_else(|e| {
+                    log::warn!("Config parse error, using defaults: {e}");
+                    Self::default()
+                })
+            }
+            Err(_) => {
+                log::info!("No config file found, using defaults");
+                Self::default()
+            }
+        };
+        log::info!(
+            "Config: lc0={} engine_weights={} maia_weights={} max_nodes={} cpuct_init={} alpha={} contempt={} safety={}",
+            config.lc0_path, config.engine_weights_path, config.maia_weights_path,
+            config.max_nodes, config.cpuct_init, config.alpha, config.contempt, config.safety
+        );
+        config
     }
 
     fn config_path() -> PathBuf {
