@@ -91,7 +91,6 @@ impl Engine {
         engine.send("setoption name UCI_ShowWDL value true")?;
         engine.send("setoption name MultiPV value 500")?;
         engine.send("setoption name SmartPruningFactor value 0")?;
-        engine.send("setoption name PolicyTemperature value 5.00")?;
         engine.send(&format!(
             "setoption name NNCacheSizeMb value {nn_cache_size_mb}"
         ))?;
