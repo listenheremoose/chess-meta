@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::engine::{Engine, EngineEval};
-use crate::maia::MaiaEngine;
-use crate::position::PositionState;
+use crate::engine::{Engine, EngineEval, EngineError};
+use crate::maia::{MaiaEngine, MaiaError};
+use crate::position::{PositionState, PositionError};
 use crate::search::{
     NodeId, NodeType, RootMoveInfo, SearchState, SearchTree, backpropagate,
     candidate_moves_chance, candidate_moves_max, root_move_infos, select,
@@ -42,6 +42,30 @@ pub struct TreeNodeInfo {
     pub visit_count: u64,
     pub q_value: f64,
     pub depth: u32,
+}
+
+/// Error type for the MCTS expand-and-evaluate step.
+#[derive(Debug)]
+enum CoordinatorError {
+    Position { source: PositionError, move_sequence: String },
+    Engine { source: EngineError, move_sequence: String },
+    Maia { source: MaiaError, move_sequence: String },
+    NodeNotFound { node_id: NodeId },
+}
+
+impl std::fmt::Display for CoordinatorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Position { source, move_sequence } =>
+                write!(f, "Position error for '{move_sequence}': {source}"),
+            Self::Engine { source, move_sequence } =>
+                write!(f, "Engine error for '{move_sequence}': {source}"),
+            Self::Maia { source, move_sequence } =>
+                write!(f, "Maia error for '{move_sequence}': {source}"),
+            Self::NodeNotFound { node_id } =>
+                write!(f, "Node {:?} not found in tree", node_id),
+        }
+    }
 }
 
 /// Controls for the MCTS search running in a background thread.
@@ -108,21 +132,21 @@ impl Coordinator {
         let root_id = tree.root_id;
         let root_epd = tree.root().epd.clone();
         let root_move_seq = tree.root().move_sequence.clone();
-        match cache.get_engine_eval(&root_epd) {
-            Some((w, d, l, policy, q_values)) => {
-                let root = tree.get_mut(root_id).unwrap();
-                root.wdl = Some((w, d, l));
-                root.engine_policy = Some(policy);
-                root.engine_q_values = Some(q_values);
+        if let Some((w, d, l, policy, q_values)) = cache.get_engine_eval(&root_epd) {
+            match tree.get_mut(root_id) {
+                Some(root) => {
+                    root.wdl = Some((w, d, l));
+                    root.engine_policy = Some(policy);
+                    root.engine_q_values = Some(q_values);
+                }
+                None => log::error!("load_persisted: root node {:?} missing from loaded tree", root_id),
             }
-            None => {}
         }
-        match cache.get_maia_policy(&root_move_seq) {
-            Some(maia_pol) => {
-                let root = tree.get_mut(root_id).unwrap();
-                root.maia_policy = Some(maia_pol);
+        if let Some(maia_pol) = cache.get_maia_policy(&root_move_seq) {
+            match tree.get_mut(root_id) {
+                Some(root) => { root.maia_policy = Some(maia_pol); }
+                None => log::error!("load_persisted: root node {:?} missing from loaded tree", root_id),
             }
-            None => {}
         }
 
         let moves = root_move_infos(&tree, config);
@@ -267,21 +291,21 @@ fn run_mcts(
                     let _ = root;
                     // Need mutable access — reconstruct after loading evals
                     let mut tree = loaded;
-                    match c.get_engine_eval(&root_epd) {
-                        Some((w, d, l, policy, q_values)) => {
-                            let root = tree.get_mut(root_id).unwrap();
-                            root.wdl = Some((w, d, l));
-                            root.engine_policy = Some(policy);
-                            root.engine_q_values = Some(q_values);
+                    if let Some((w, d, l, policy, q_values)) = c.get_engine_eval(&root_epd) {
+                        match tree.get_mut(root_id) {
+                            Some(root) => {
+                                root.wdl = Some((w, d, l));
+                                root.engine_policy = Some(policy);
+                                root.engine_q_values = Some(q_values);
+                            }
+                            None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
                         }
-                        None => {}
                     }
-                    match c.get_maia_policy(&root_move_seq) {
-                        Some(maia_pol) => {
-                            let root = tree.get_mut(root_id).unwrap();
-                            root.maia_policy = Some(maia_pol);
+                    if let Some(maia_pol) = c.get_maia_policy(&root_move_seq) {
+                        match tree.get_mut(root_id) {
+                            Some(root) => { root.maia_policy = Some(maia_pol); }
+                            None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
                         }
-                        None => {}
                     }
                     tree
                 }
@@ -484,9 +508,9 @@ fn expand_and_evaluate(
     cache: Option<&Cache>,
     cache_hits: &mut u64,
     cache_misses: &mut u64,
-) -> Result<f64, String> {
+) -> Result<f64, CoordinatorError> {
     let (epd, move_seq, node_type, terminal, already_expanded) = {
-        let leaf = tree.get(leaf_id).ok_or("Node not found")?;
+        let leaf = tree.get(leaf_id).ok_or(CoordinatorError::NodeNotFound { node_id: leaf_id })?;
         (
             leaf.epd.clone(),
             leaf.move_sequence.clone(),
@@ -511,7 +535,7 @@ fn expand_and_evaluate(
 
     // Already expanded but no children (all candidates filtered out) — reuse cached value
     if already_expanded {
-        let leaf = tree.get(leaf_id).ok_or("Node not found")?;
+        let leaf = tree.get(leaf_id).ok_or(CoordinatorError::NodeNotFound { node_id: leaf_id })?;
         match leaf.wdl {
             Some(wdl) => {
                 let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
@@ -522,9 +546,11 @@ fn expand_and_evaluate(
     }
 
     // Check terminal via position
-    let position = PositionState::from_moves(&move_seq)?;
+    let position = PositionState::from_moves(&move_seq)
+        .map_err(|e| CoordinatorError::Position { source: e, move_sequence: move_seq.clone() })?;
     match position.terminal_value() {
         Some(tv) => {
+            // leaf_id was verified present by ok_or above
             let leaf = tree.get_mut(leaf_id).unwrap();
             leaf.terminal_value = Some(tv);
             leaf.expanded = true;
@@ -545,7 +571,8 @@ fn expand_and_evaluate(
         }
         None => {
             *cache_misses += 1;
-            let eval = engine.evaluate(&move_seq, config.engine_nodes)?;
+            let eval = engine.evaluate(&move_seq, config.engine_nodes)
+                .map_err(|e| CoordinatorError::Engine { source: e, move_sequence: move_seq.clone() })?;
             match cache {
                 Some(c) => { let _ = c.put_engine_eval(&epd, eval.wdl, &eval.policy, &eval.q_values); }
                 None => {}
@@ -566,7 +593,8 @@ fn expand_and_evaluate(
         }
         None => {
             *cache_misses += 1;
-            let policy = maia.predict(&move_seq)?;
+            let policy = maia.predict(&move_seq)
+                .map_err(|e| CoordinatorError::Maia { source: e, move_sequence: move_seq.clone() })?;
             match cache {
                 Some(c) => { let _ = c.put_maia_policy(&move_seq, &policy); }
                 None => {}
@@ -580,6 +608,7 @@ fn expand_and_evaluate(
 
     // Store eval data on the node
     {
+        // leaf_id was verified present by ok_or above
         let leaf = tree.get_mut(leaf_id).unwrap();
         leaf.engine_policy = Some(engine_eval.policy.clone());
         leaf.engine_q_values = Some(engine_eval.q_values.clone());
@@ -611,6 +640,7 @@ fn expand_and_evaluate(
                     *prior,
                 );
                 match child_terminal {
+                    // child_id was just returned by add_child above
                     Some(tv) => tree.get_mut(child_id).unwrap().terminal_value = Some(tv),
                     None => {}
                 }
@@ -621,6 +651,7 @@ fn expand_and_evaluate(
         }
     });
 
+    // leaf_id was verified present by ok_or above
     tree.get_mut(leaf_id).unwrap().expanded = true;
 
     Ok(value)

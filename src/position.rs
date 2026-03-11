@@ -1,5 +1,22 @@
 use shakmaty::{Chess, Color, Position, fen::Epd, uci::UciMove};
 
+#[derive(Debug)]
+pub enum PositionError {
+    InvalidMove { token: String, source: String },
+    IllegalMove { token: String, source: String },
+}
+
+impl std::fmt::Display for PositionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidMove { token, source } => write!(f, "Invalid UCI move '{token}': {source}"),
+            Self::IllegalMove { token, source } => write!(f, "Illegal move '{token}': {source}"),
+        }
+    }
+}
+
+impl std::error::Error for PositionError {}
+
 /// Tracks position state with both EPD (for engine cache) and move sequence (for Maia cache).
 #[derive(Debug, Clone)]
 pub struct PositionState {
@@ -24,7 +41,7 @@ impl PositionState {
     }
 
     /// Create a position from a space-separated UCI move sequence.
-    pub fn from_moves(moves_str: &str) -> Result<Self, String> {
+    pub fn from_moves(moves_str: &str) -> Result<Self, PositionError> {
         if moves_str.trim().is_empty() {
             return Ok(Self::startpos());
         }
@@ -36,17 +53,23 @@ impl PositionState {
                 |(mut chess, mut move_sequence), token| {
                     let uci_move: UciMove = token
                         .parse()
-                        .map_err(|e| format!("Invalid UCI move '{token}': {e}"))?;
+                        .map_err(|e| PositionError::InvalidMove {
+                            token: token.to_string(),
+                            source: format!("{e}"),
+                        })?;
                     let legal_move = uci_move
                         .to_move(&chess)
-                        .map_err(|e| format!("Illegal move '{token}': {e}"))?;
+                        .map_err(|e| PositionError::IllegalMove {
+                            token: token.to_string(),
+                            source: format!("{e}"),
+                        })?;
                     chess.play_unchecked(&legal_move);
 
                     if !move_sequence.is_empty() {
                         move_sequence.push(' ');
                     }
                     move_sequence.push_str(token);
-                    Ok::<_, String>((chess, move_sequence))
+                    Ok::<_, PositionError>((chess, move_sequence))
                 },
             )?;
 
@@ -59,13 +82,19 @@ impl PositionState {
     }
 
     /// Apply a UCI move string to this position, returning a new PositionState.
-    pub fn apply_uci(&self, uci_str: &str) -> Result<Self, String> {
+    pub fn apply_uci(&self, uci_str: &str) -> Result<Self, PositionError> {
         let uci_move: UciMove = uci_str
             .parse()
-            .map_err(|e| format!("Invalid UCI move '{uci_str}': {e}"))?;
+            .map_err(|e| PositionError::InvalidMove {
+                token: uci_str.to_string(),
+                source: format!("{e}"),
+            })?;
         let legal_move = uci_move
             .to_move(&self.chess)
-            .map_err(|e| format!("Illegal move '{uci_str}': {e}"))?;
+            .map_err(|e| PositionError::IllegalMove {
+                token: uci_str.to_string(),
+                source: format!("{e}"),
+            })?;
 
         let mut new_chess = self.chess.clone();
         new_chess.play_unchecked(&legal_move);

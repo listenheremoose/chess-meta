@@ -4,6 +4,31 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 
 use crate::engine::parse_verbose_move_stats;
 
+#[derive(Debug)]
+pub enum MaiaError {
+    SpawnFailed(std::io::Error),
+    StdinUnavailable,
+    StdoutUnavailable,
+    WriteFailed(std::io::Error),
+    ReadFailed(std::io::Error),
+    ProcessTerminated,
+}
+
+impl std::fmt::Display for MaiaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SpawnFailed(e) => write!(f, "Failed to spawn Maia engine: {e}"),
+            Self::StdinUnavailable => write!(f, "Maia engine stdin unavailable"),
+            Self::StdoutUnavailable => write!(f, "Maia engine stdout unavailable"),
+            Self::WriteFailed(e) => write!(f, "Failed to write to Maia engine: {e}"),
+            Self::ReadFailed(e) => write!(f, "Failed to read from Maia engine: {e}"),
+            Self::ProcessTerminated => write!(f, "Maia engine process terminated unexpectedly"),
+        }
+    }
+}
+
+impl std::error::Error for MaiaError {}
+
 /// Persistent lc0 process running Maia weights for human-play prediction.
 pub struct MaiaEngine {
     child: Child,
@@ -16,7 +41,7 @@ pub struct MaiaEngine {
 }
 
 impl MaiaEngine {
-    pub fn new(lc0_path: &str, maia_weights_path: &str, ucinewgame_interval: u32) -> Result<Self, String> {
+    pub fn new(lc0_path: &str, maia_weights_path: &str, ucinewgame_interval: u32) -> Result<Self, MaiaError> {
         let mut cmd = Command::new(lc0_path);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -28,10 +53,10 @@ impl MaiaEngine {
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to spawn Maia engine: {e}"))?;
+            .map_err(MaiaError::SpawnFailed)?;
 
-        let stdin = child.stdin.take().ok_or("No stdin")?;
-        let stdout = child.stdout.take().ok_or("No stdout")?;
+        let stdin = child.stdin.take().ok_or(MaiaError::StdinUnavailable)?;
+        let stdout = child.stdout.take().ok_or(MaiaError::StdoutUnavailable)?;
         let reader = BufReader::new(stdout);
 
         let mut engine = MaiaEngine {
@@ -64,7 +89,7 @@ impl MaiaEngine {
     /// Get Maia's human-play probability distribution for a position.
     /// `move_sequence` must be the full move sequence from game start (Maia requires history).
     /// Returns map of UCI move -> policy percentage (0-100).
-    pub fn predict(&mut self, move_sequence: &str) -> Result<HashMap<String, f32>, String> {
+    pub fn predict(&mut self, move_sequence: &str) -> Result<HashMap<String, f32>, MaiaError> {
         // Periodically send ucinewgame to clear internal state
         self.query_count += 1;
         if self.query_count % self.ucinewgame_interval == 0 {
@@ -104,32 +129,32 @@ impl MaiaEngine {
         Ok(policy_map)
     }
 
-    fn send(&mut self, cmd: &str) -> Result<(), String> {
+    fn send(&mut self, cmd: &str) -> Result<(), MaiaError> {
         writeln!(self.stdin, "{cmd}")
             .map_err(|e| {
                 log::error!("Failed to write to Maia engine: {e}");
-                format!("Failed to write to Maia engine: {e}")
+                MaiaError::WriteFailed(e)
             })?;
         Ok(())
     }
 
     /// Read a line into the reusable buffer, avoiding repeated allocation.
-    fn read_line_into_buffer(&mut self) -> Result<(), String> {
+    fn read_line_into_buffer(&mut self) -> Result<(), MaiaError> {
         self.line_buffer.clear();
         let bytes = self.reader
             .read_line(&mut self.line_buffer)
             .map_err(|e| {
                 log::error!("Failed to read from Maia engine: {e}");
-                format!("Failed to read from Maia engine: {e}")
+                MaiaError::ReadFailed(e)
             })?;
         if bytes == 0 {
             log::error!("Maia engine process terminated unexpectedly");
-            return Err("Maia engine process terminated unexpectedly".to_string());
+            return Err(MaiaError::ProcessTerminated);
         }
         Ok(())
     }
 
-    fn wait_for(&mut self, expected: &str) -> Result<(), String> {
+    fn wait_for(&mut self, expected: &str) -> Result<(), MaiaError> {
         loop {
             self.read_line_into_buffer()?;
             if self.line_buffer.trim().starts_with(expected) {

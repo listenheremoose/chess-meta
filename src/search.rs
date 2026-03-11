@@ -322,6 +322,8 @@ fn select_chance(tree: &SearchTree, node_id: NodeId, config: &Config, state: &mu
 
     match found {
         Some((i, _)) => children[i],
+        // Fallback: floating-point rounding caused r >= cumulative sum; select last child.
+        // children is guaranteed non-empty — select_chance is only called on expanded nodes.
         None => *children.last().unwrap(),
     }
 }

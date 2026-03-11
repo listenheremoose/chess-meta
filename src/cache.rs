@@ -3,6 +3,29 @@ use std::path::PathBuf;
 
 use rusqlite::{Connection, params};
 
+#[derive(Debug)]
+pub enum CacheError {
+    OpenFailed { path: String, source: rusqlite::Error },
+    InitFailed(rusqlite::Error),
+    QueryFailed(rusqlite::Error),
+    SerializationFailed(serde_json::Error),
+    TransactionFailed(rusqlite::Error),
+}
+
+impl std::fmt::Display for CacheError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpenFailed { path, source } => write!(f, "Failed to open cache DB at '{path}': {source}"),
+            Self::InitFailed(e) => write!(f, "Failed to initialize cache tables: {e}"),
+            Self::QueryFailed(e) => write!(f, "Cache query failed: {e}"),
+            Self::SerializationFailed(e) => write!(f, "Cache serialization failed: {e}"),
+            Self::TransactionFailed(e) => write!(f, "Cache transaction failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for CacheError {}
+
 /// SQLite cache for engine evaluations and Maia predictions.
 /// Engine evals are keyed by EPD (transposition-safe).
 /// Maia predictions are keyed by full move sequence (history-dependent).
@@ -13,14 +36,14 @@ pub struct Cache {
 impl Cache {
     /// Open an in-memory SQLite database (for testing / integration tests).
     #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
-    pub fn open_in_memory() -> Result<Self, String> {
+    pub fn open_in_memory() -> Result<Self, CacheError> {
         let conn = Connection::open_in_memory()
-            .map_err(|e| format!("Failed to open in-memory DB: {e}"))?;
+            .map_err(|e| CacheError::OpenFailed { path: ":memory:".to_string(), source: e })?;
         Self::init_tables(&conn)?;
         Ok(Self { conn })
     }
 
-    fn init_tables(conn: &Connection) -> Result<(), String> {
+    fn init_tables(conn: &Connection) -> Result<(), CacheError> {
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS engine_cache (
@@ -55,7 +78,7 @@ impl Cache {
             CREATE INDEX IF NOT EXISTS idx_tree_session ON tree_nodes(session_id);
             ",
         )
-        .map_err(|e| format!("Failed to create cache tables: {e}"))?;
+        .map_err(CacheError::InitFailed)?;
 
         // Migrate: add columns that may be missing from older schema versions
         let _ = conn.execute_batch(
@@ -68,12 +91,12 @@ impl Cache {
         Ok(())
     }
 
-    pub fn open() -> Result<Self, String> {
+    pub fn open() -> Result<Self, CacheError> {
         let path = Self::db_path();
         let conn =
             Connection::open(&path).map_err(|e| {
-                log::error!("Failed to open cache DB: {e}");
-                format!("Failed to open cache DB: {e}")
+                log::error!("Failed to open cache DB at '{}': {e}", path.display());
+                CacheError::OpenFailed { path: path.display().to_string(), source: e }
             })?;
 
         Self::init_tables(&conn)?;
@@ -123,18 +146,18 @@ impl Cache {
         wdl: (u32, u32, u32),
         policy: &HashMap<String, f32>,
         q_values: &HashMap<String, f32>,
-    ) -> Result<(), String> {
+    ) -> Result<(), CacheError> {
         let policy_json =
-            serde_json::to_string(policy).map_err(|e| format!("JSON serialize error: {e}"))?;
+            serde_json::to_string(policy).map_err(CacheError::SerializationFailed)?;
         let q_json =
-            serde_json::to_string(q_values).map_err(|e| format!("JSON serialize error: {e}"))?;
+            serde_json::to_string(q_values).map_err(CacheError::SerializationFailed)?;
 
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO engine_cache (epd, wdl_w, wdl_d, wdl_l, policy_json, q_values_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![epd, wdl.0, wdl.1, wdl.2, policy_json, q_json],
             )
-            .map_err(|e| format!("Failed to cache engine eval: {e}"))?;
+            .map_err(CacheError::QueryFailed)?;
         Ok(())
     }
 
@@ -164,16 +187,16 @@ impl Cache {
         &self,
         move_sequence: &str,
         policy: &HashMap<String, f32>,
-    ) -> Result<(), String> {
+    ) -> Result<(), CacheError> {
         let json =
-            serde_json::to_string(policy).map_err(|e| format!("JSON serialize error: {e}"))?;
+            serde_json::to_string(policy).map_err(CacheError::SerializationFailed)?;
 
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO maia_cache (move_sequence, policy_json) VALUES (?1, ?2)",
                 params![move_sequence, json],
             )
-            .map_err(|e| format!("Failed to cache Maia policy: {e}"))?;
+            .map_err(CacheError::QueryFailed)?;
         Ok(())
     }
 
@@ -184,17 +207,17 @@ impl Cache {
         &self,
         tree: &crate::search::SearchTree,
         session_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), CacheError> {
         self.conn
             .execute("BEGIN", [])
-            .map_err(|e| format!("Failed to begin transaction: {e}"))?;
+            .map_err(CacheError::TransactionFailed)?;
 
         let result = self.save_tree_inner(tree, session_id);
 
         if result.is_ok() {
             self.conn
                 .execute("COMMIT", [])
-                .map_err(|e| format!("Failed to commit: {e}"))?;
+                .map_err(CacheError::TransactionFailed)?;
         } else {
             let _ = self.conn.execute("ROLLBACK", []);
         }
@@ -206,19 +229,19 @@ impl Cache {
         &self,
         tree: &crate::search::SearchTree,
         session_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), CacheError> {
         self.conn
             .execute(
                 "DELETE FROM tree_nodes WHERE session_id = ?1",
                 params![session_id],
             )
-            .map_err(|e| format!("Failed to clear old tree: {e}"))?;
+            .map_err(CacheError::QueryFailed)?;
 
         let mut stmt = self.conn
             .prepare(
                 "INSERT OR REPLACE INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )
-            .map_err(|e| format!("Failed to prepare save statement: {e}"))?;
+            .map_err(CacheError::QueryFailed)?;
 
         tree.nodes.iter().try_for_each(|node| {
             let node_type_str = match node.node_type {
@@ -226,7 +249,7 @@ impl Cache {
                 crate::search::NodeType::Chance => "Chance",
             };
             let children_json = serde_json::to_string(&node.children)
-                .map_err(|e| format!("JSON error: {e}"))?;
+                .map_err(CacheError::SerializationFailed)?;
 
             stmt.execute(params![
                 node.id.0 as i64,
@@ -243,8 +266,8 @@ impl Cache {
                 node.expanded as i32,
                 node.terminal_value,
             ])
-            .map_err(|e| format!("Failed to save node {:?}: {e}", node.id))?;
-            Ok::<(), String>(())
+            .map_err(CacheError::QueryFailed)?;
+            Ok::<(), CacheError>(())
         })?;
 
         Ok(())
@@ -352,13 +375,13 @@ impl Cache {
         Some(crate::search::SearchTree::from_nodes(nodes, NodeId(0), max_id + 1))
     }
 
-    pub fn clear_tree(&self, session_id: &str) -> Result<(), String> {
+    pub fn clear_tree(&self, session_id: &str) -> Result<(), CacheError> {
         self.conn
             .execute(
                 "DELETE FROM tree_nodes WHERE session_id = ?1",
                 params![session_id],
             )
-            .map_err(|e| format!("Failed to clear tree: {e}"))?;
+            .map_err(CacheError::QueryFailed)?;
         Ok(())
     }
 

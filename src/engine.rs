@@ -4,6 +4,31 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 
 const LINE_BUFFER_CAPACITY: usize = 512;
 
+#[derive(Debug)]
+pub enum EngineError {
+    SpawnFailed(std::io::Error),
+    StdinUnavailable,
+    StdoutUnavailable,
+    WriteFailed(std::io::Error),
+    ReadFailed(std::io::Error),
+    ProcessTerminated,
+}
+
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SpawnFailed(e) => write!(f, "Failed to spawn lc0 engine: {e}"),
+            Self::StdinUnavailable => write!(f, "Engine stdin unavailable"),
+            Self::StdoutUnavailable => write!(f, "Engine stdout unavailable"),
+            Self::WriteFailed(e) => write!(f, "Failed to write to engine: {e}"),
+            Self::ReadFailed(e) => write!(f, "Failed to read from engine: {e}"),
+            Self::ProcessTerminated => write!(f, "Engine process terminated unexpectedly"),
+        }
+    }
+}
+
+impl std::error::Error for EngineError {}
+
 type PolicyMap = HashMap<String, f32>;
 type VerboseStatsMap = HashMap<String, (f32, Option<f32>)>;
 
@@ -64,7 +89,7 @@ impl Engine {
         weights_path: &str,
         nn_cache_size_mb: u32,
         ucinewgame_interval: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, EngineError> {
         let mut cmd = Command::new(lc0_path);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -76,10 +101,10 @@ impl Engine {
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to spawn lc0 engine: {e}"))?;
+            .map_err(EngineError::SpawnFailed)?;
 
-        let stdin = child.stdin.take().ok_or("No stdin")?;
-        let stdout = child.stdout.take().ok_or("No stdout")?;
+        let stdin = child.stdin.take().ok_or(EngineError::StdinUnavailable)?;
+        let stdout = child.stdout.take().ok_or(EngineError::StdoutUnavailable)?;
         let reader = BufReader::new(stdout);
 
         let mut engine = Engine {
@@ -113,7 +138,7 @@ impl Engine {
 
     /// Evaluate a position at nodes=1. Returns engine eval with WDL, policy, and Q values.
     /// `move_sequence` is space-separated UCI moves from startpos.
-    pub fn evaluate(&mut self, move_sequence: &str, nodes: u64) -> Result<EngineEval, String> {
+    pub fn evaluate(&mut self, move_sequence: &str, nodes: u64) -> Result<EngineEval, EngineError> {
         // Periodically send ucinewgame to clear lc0 internal tree
         self.query_count += 1;
         if self.query_count % self.ucinewgame_interval == 0 {
@@ -166,31 +191,31 @@ impl Engine {
         })
     }
 
-    fn send(&mut self, cmd: &str) -> Result<(), String> {
+    fn send(&mut self, cmd: &str) -> Result<(), EngineError> {
         writeln!(self.stdin, "{cmd}").map_err(|e| {
             log::error!("Failed to write to engine: {e}");
-            format!("Failed to write to engine: {e}")
+            EngineError::WriteFailed(e)
         })?;
         Ok(())
     }
 
     /// Read a line into the reusable buffer, avoiding repeated allocation.
-    fn read_line_into_buffer(&mut self) -> Result<(), String> {
+    fn read_line_into_buffer(&mut self) -> Result<(), EngineError> {
         self.line_buffer.clear();
         let bytes = self.reader
             .read_line(&mut self.line_buffer)
             .map_err(|e| {
                 log::error!("Failed to read from engine: {e}");
-                format!("Failed to read from engine: {e}")
+                EngineError::ReadFailed(e)
             })?;
         if bytes == 0 {
             log::error!("Engine process terminated unexpectedly");
-            return Err("Engine process terminated unexpectedly".to_string());
+            return Err(EngineError::ProcessTerminated);
         }
         Ok(())
     }
 
-    fn wait_for(&mut self, expected: &str) -> Result<(), String> {
+    fn wait_for(&mut self, expected: &str) -> Result<(), EngineError> {
         loop {
             self.read_line_into_buffer()?;
             if self.line_buffer.trim().starts_with(expected) {
