@@ -244,10 +244,13 @@ pub fn castle_to_king_rook(uci: &str) -> Option<&'static str> {
 }
 
 /// Look up a move in a map, trying the king-rook castling alias if direct lookup fails.
-pub fn lookup_castling_aware<T: Copy>(
+pub fn lookup_castling_aware<T>(
     uci_move: &str,
     map: &HashMap<String, T>,
-) -> Option<T> {
+) -> Option<T>
+where
+    T: Copy,
+{
     map.get(uci_move)
         .or_else(|| castle_to_king_rook(uci_move).and_then(|alt| map.get(alt)))
         .copied()
@@ -255,7 +258,12 @@ pub fn lookup_castling_aware<T: Copy>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
+
+    use super::{
+        castle_to_king_rook, format_position_cmd, lookup_castling_aware, parse_verbose_move_stats,
+        parse_wdl, EngineEval,
+    };
 
     // -- UCI Output Parsing --
 

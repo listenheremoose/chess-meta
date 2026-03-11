@@ -63,49 +63,50 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::MoveInputChanged(input) => {
-                self.move_input = input;
-            }
-            Message::StartSearch => {
-                if !self.config.engine_paths_configured() {
-                    log::warn!("Engine paths not configured");
-                    return Task::none();
-                }
-                self.coordinator
-                    .start(self.move_input.clone(), self.config.clone());
-                self.selected_move = None;
-                self.tree_view_state.clear_cache();
-                self.progress_state.clear_cache();
-            }
-            Message::PauseSearch => {
-                self.coordinator.stop();
-            }
-            Message::ResetSearch => {
-                self.coordinator.stop();
-                self.coordinator.clear_session(&self.move_input);
-                self.coordinator.latest_snapshot = None;
-                self.selected_move = None;
-                self.tree_view_state.clear_cache();
-                self.progress_state.clear_cache();
-            }
-            Message::Tick => {
-                if self.coordinator.poll() {
-                    self.tree_view_state.clear_cache();
-                    self.progress_state.clear_cache();
-
-                    // Auto-select best move if none selected
-                    if self.selected_move.is_none() {
-                        if let Some(snap) = &self.coordinator.latest_snapshot {
-                            self.selected_move = snap.best_move.clone();
-                        }
-                    }
-                }
-            }
-            Message::SelectMove(uci) => {
-                self.selected_move = Some(uci);
-            }
+            Message::MoveInputChanged(input) => self.move_input = input,
+            Message::StartSearch => return self.handle_start_search(),
+            Message::PauseSearch => self.coordinator.stop(),
+            Message::ResetSearch => self.handle_reset_search(),
+            Message::Tick => self.handle_tick(),
+            Message::SelectMove(uci) => self.selected_move = Some(uci),
         }
         Task::none()
+    }
+
+    fn handle_start_search(&mut self) -> Task<Message> {
+        if !self.config.engine_paths_configured() {
+            log::warn!("Engine paths not configured");
+            return Task::none();
+        }
+        self.coordinator
+            .start(self.move_input.clone(), self.config.clone());
+        self.selected_move = None;
+        self.tree_view_state.clear_cache();
+        self.progress_state.clear_cache();
+        Task::none()
+    }
+
+    fn handle_reset_search(&mut self) {
+        self.coordinator.stop();
+        self.coordinator.clear_session(&self.move_input);
+        self.coordinator.latest_snapshot = None;
+        self.selected_move = None;
+        self.tree_view_state.clear_cache();
+        self.progress_state.clear_cache();
+    }
+
+    fn handle_tick(&mut self) {
+        if self.coordinator.poll() {
+            self.tree_view_state.clear_cache();
+            self.progress_state.clear_cache();
+
+            // Auto-select best move if none selected
+            if self.selected_move.is_none() {
+                if let Some(snap) = &self.coordinator.latest_snapshot {
+                    self.selected_move = snap.best_move.clone();
+                }
+            }
+        }
     }
 
     pub fn view(&self) -> Element<'_, Message> {

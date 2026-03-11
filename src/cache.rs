@@ -333,7 +333,11 @@ impl Cache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
+
+    use rusqlite::Connection;
+
+    use super::Cache;
 
     /// Open an in-memory SQLite database for testing.
     fn test_cache() -> Cache {

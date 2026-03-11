@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Geometry, Path, Stroke, Text};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
@@ -97,15 +99,15 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
             let level_height = bounds.height / (max_depth as f32 + 2.0);
 
             // Assign x positions per level
-            let mut level_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
-            let mut positions: std::collections::HashMap<u64, Point> = std::collections::HashMap::new();
+            let mut level_counts: HashMap<u32, usize> = HashMap::new();
+            let mut positions: HashMap<u64, Point> = HashMap::new();
 
             // Count nodes per level first
             for n in &visible {
                 *level_counts.entry(n.depth).or_insert(0) += 1;
             }
 
-            let mut level_indices: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+            let mut level_indices: HashMap<u32, usize> = HashMap::new();
 
             for n in &visible {
                 let count = level_counts[&n.depth];
@@ -155,19 +157,8 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
                 };
 
                 match n.node_type {
-                    NodeType::Max => {
-                        // Rectangle for MAX nodes
-                        frame.fill_rectangle(
-                            Point::new(pos.x - size / 2.0, pos.y - size / 2.0),
-                            Size::new(size, size),
-                            node_color,
-                        );
-                    }
-                    NodeType::Chance => {
-                        // Circle for CHANCE nodes
-                        let circle = Path::circle(pos, size / 2.0);
-                        frame.fill(&circle, node_color);
-                    }
+                    NodeType::Max => draw_max_node(frame, pos, size, node_color),
+                    NodeType::Chance => draw_chance_node(frame, pos, size, node_color),
                 }
 
                 // Label for nodes with enough visits
@@ -188,6 +179,19 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
         vec![geometry]
     }
+}
+
+fn draw_max_node(frame: &mut canvas::Frame, pos: Point, size: f32, color: Color) {
+    frame.fill_rectangle(
+        Point::new(pos.x - size / 2.0, pos.y - size / 2.0),
+        Size::new(size, size),
+        color,
+    );
+}
+
+fn draw_chance_node(frame: &mut canvas::Frame, pos: Point, size: f32, color: Color) {
+    let circle = Path::circle(pos, size / 2.0);
+    frame.fill(&circle, color);
 }
 
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {

@@ -130,7 +130,9 @@ fn uci_move_str(m: &Move) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use shakmaty::Color;
+
+    use super::PositionState;
 
     // -- Startpos --
 

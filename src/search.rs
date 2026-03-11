@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::Config;
 use crate::engine::lookup_castling_aware;
@@ -316,7 +316,7 @@ pub fn candidate_moves_max(
         .collect();
 
     // Deduplicate
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut candidates = Vec::new();
 
     for uci in engine_top.iter().chain(maia_top.iter()) {
@@ -550,7 +550,15 @@ fn is_white_to_move_from_node(node: &Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
+
+    use crate::config::Config;
+
+    use super::{
+        backpropagate, candidate_moves_chance, candidate_moves_max,
+        is_white_to_move_from_node, root_move_infos, select, select_chance, select_puct,
+        worst_case_value, Node, NodeType, SearchTree,
+    };
 
     // ── TreeBuilder ──────────────────────────────────────────────────────
 
