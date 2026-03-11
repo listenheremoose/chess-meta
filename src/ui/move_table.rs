@@ -1,4 +1,4 @@
-use iced::widget::{container, row, scrollable, text, Column};
+use iced::widget::{button, container, row, scrollable, text, Column};
 use iced::{Element, Length};
 
 use crate::app::Message;
@@ -59,18 +59,23 @@ pub fn view<'a>(
         .spacing(4)
         .padding(4);
 
-        rows.push(
-            container(move_row)
-                .style(move |_theme: &iced::Theme| {
-                    if is_selected {
-                        container::Style {
-                            background: Some(iced::Background::Color(colors::SURFACE)),
-                            ..Default::default()
-                        }
-                    } else {
-                        container::Style::default()
+        let styled_row = container(move_row)
+            .style(move |_theme: &iced::Theme| {
+                if is_selected {
+                    container::Style {
+                        background: Some(iced::Background::Color(colors::SURFACE)),
+                        ..Default::default()
                     }
-                })
+                } else {
+                    container::Style::default()
+                }
+            });
+
+        rows.push(
+            button(styled_row)
+                .on_press(Message::SelectMove(info.uci_move.clone()))
+                .style(|_theme, _state| button::Style::default())
+                .width(Length::Fill)
                 .into(),
         );
 
@@ -93,7 +98,7 @@ pub fn view<'a>(
 }
 
 /// Detail panel for a selected move.
-fn move_detail<'a>(info: &RootMoveInfo) -> Option<Element<'a, Message>> {
+fn move_detail(info: &RootMoveInfo) -> Option<Element<'_, Message>> {
     let mut details = Vec::new();
 
     details.push(

@@ -13,6 +13,7 @@ pub enum Message {
     PauseSearch,
     ResetSearch,
     Tick,
+    SelectMove(String),
 }
 
 /// Main application state.
@@ -63,6 +64,7 @@ impl App {
             Message::PauseSearch => self.handle_pause_search(),
             Message::ResetSearch => self.handle_reset_search(),
             Message::Tick => self.handle_tick(),
+            Message::SelectMove(mv) => self.selected_move = Some(mv),
         }
         Task::none()
     }
