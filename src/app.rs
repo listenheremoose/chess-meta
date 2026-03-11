@@ -9,6 +9,7 @@ use crate::ui::{controls, move_table, progress, tree_view};
 #[derive(Debug, Clone)]
 pub enum Message {
     MoveInputChanged(String),
+    MoveInputSettled,
     StartSearch,
     PauseSearch,
     ResetSearch,
@@ -24,6 +25,10 @@ pub struct App {
     selected_move: Option<String>,
     tree_view_state: tree_view::TreeViewState,
     progress_state: progress::ProgressState,
+    /// Incremented on each keystroke; used to debounce DB lookups.
+    move_input_generation: u64,
+    /// Generation at which we last ran load_persisted for the input field.
+    last_settled_generation: u64,
 }
 
 impl App {
@@ -40,6 +45,8 @@ impl App {
                 selected_move: None,
                 tree_view_state: tree_view::TreeViewState::default(),
                 progress_state: progress::ProgressState::default(),
+                move_input_generation: 0,
+                last_settled_generation: 0,
             },
             Task::none(),
         )
@@ -50,26 +57,38 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if self.coordinator.running {
+        let tick = if self.coordinator.running {
             iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::Tick)
         } else {
             Subscription::none()
-        }
+        };
+
+        // Fire a debounce message 300 ms after the last keystroke while idle.
+        let debounce = if !self.coordinator.running
+            && self.move_input_generation != self.last_settled_generation
+        {
+            iced::time::every(std::time::Duration::from_millis(300))
+                .map(|_| Message::MoveInputSettled)
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([tick, debounce])
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::MoveInputChanged(input) => {
                 self.move_input = input;
-                // When idle, immediately show persisted results for this position
-                // (mirrors startup behaviour where App::new loads persisted data).
-                if !self.coordinator.running {
-                    self.coordinator.latest_snapshot = None;
-                    self.coordinator.load_persisted(&self.move_input, &self.config);
-                    self.selected_move = None;
-                    self.tree_view_state.clear_cache();
-                    self.progress_state.clear_cache();
-                }
+                self.move_input_generation += 1;
+            }
+            Message::MoveInputSettled => {
+                self.last_settled_generation = self.move_input_generation;
+                self.coordinator.latest_snapshot = None;
+                self.coordinator.load_persisted(&self.move_input, &self.config);
+                self.selected_move = None;
+                self.tree_view_state.clear_cache();
+                self.progress_state.clear_cache();
             }
             Message::StartSearch => return self.handle_start_search(),
             Message::PauseSearch => self.handle_pause_search(),
@@ -91,6 +110,8 @@ impl App {
             return Task::none();
         }
         log::info!("Search started from UI position={}", if self.move_input.is_empty() { "startpos" } else { &self.move_input });
+        // Mark input as settled so the debounce doesn't re-trigger after the search ends.
+        self.last_settled_generation = self.move_input_generation;
         self.coordinator
             .start(self.move_input.clone(), self.config.clone());
         self.selected_move = None;
