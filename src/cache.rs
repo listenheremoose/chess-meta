@@ -44,6 +44,23 @@ impl Cache {
     }
 
     fn init_tables(conn: &Connection) -> Result<(), CacheError> {
+        // Migrate: old schema had `id INTEGER PRIMARY KEY` (single-column), which caused
+        // data corruption when multiple sessions share node IDs (every tree starts at 0).
+        // Drop and recreate so the correct compound key takes effect. The tree data is a
+        // cache and will be regenerated on the next search.
+        let old_schema: Option<String> = conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tree_nodes'",
+            [],
+            |row| row.get(0),
+        ).ok();
+        if let Some(sql) = old_schema {
+            if sql.contains("id INTEGER PRIMARY KEY") {
+                log::warn!("Migrating tree_nodes to compound primary key (id, session_id); existing tree cache will be regenerated");
+                let _ = conn.execute_batch("DROP TABLE IF EXISTS tree_nodes;");
+                let _ = conn.execute_batch("DROP INDEX IF EXISTS idx_tree_session;");
+            }
+        }
+
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS engine_cache (
@@ -61,7 +78,7 @@ impl Cache {
                 PRIMARY KEY (move_sequence)
             );
             CREATE TABLE IF NOT EXISTS tree_nodes (
-                id INTEGER PRIMARY KEY,
+                id INTEGER NOT NULL,
                 parent_id INTEGER,
                 move_uci TEXT,
                 node_type TEXT NOT NULL,
@@ -73,20 +90,13 @@ impl Cache {
                 children_json TEXT,
                 session_id TEXT NOT NULL,
                 expanded INTEGER NOT NULL DEFAULT 0,
-                terminal_value REAL
+                terminal_value REAL,
+                PRIMARY KEY (id, session_id)
             );
             CREATE INDEX IF NOT EXISTS idx_tree_session ON tree_nodes(session_id);
             ",
         )
         .map_err(CacheError::InitFailed)?;
-
-        // Migrate: add columns that may be missing from older schema versions
-        let _ = conn.execute_batch(
-            "ALTER TABLE tree_nodes ADD COLUMN expanded INTEGER NOT NULL DEFAULT 0;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE tree_nodes ADD COLUMN terminal_value REAL;",
-        );
 
         Ok(())
     }
@@ -233,7 +243,7 @@ impl Cache {
 
         let mut stmt = self.conn
             .prepare(
-                "INSERT OR REPLACE INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                "INSERT INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )
             .map_err(CacheError::QueryFailed)?;
 

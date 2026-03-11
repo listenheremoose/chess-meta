@@ -59,7 +59,18 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::MoveInputChanged(input) => self.move_input = input,
+            Message::MoveInputChanged(input) => {
+                self.move_input = input;
+                // When idle, immediately show persisted results for this position
+                // (mirrors startup behaviour where App::new loads persisted data).
+                if !self.coordinator.running {
+                    self.coordinator.latest_snapshot = None;
+                    self.coordinator.load_persisted(&self.move_input, &self.config);
+                    self.selected_move = None;
+                    self.tree_view_state.clear_cache();
+                    self.progress_state.clear_cache();
+                }
+            }
             Message::StartSearch => return self.handle_start_search(),
             Message::PauseSearch => self.handle_pause_search(),
             Message::ResetSearch => self.handle_reset_search(),

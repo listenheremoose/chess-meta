@@ -88,6 +88,10 @@ impl Coordinator {
     pub fn start(&mut self, move_sequence: String, config: Config) {
         self.stop();
 
+        // Show any persisted results immediately, before engines initialize.
+        self.latest_snapshot = None;
+        self.load_persisted(&move_sequence, &config);
+
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_clone = Arc::clone(&cancel);
         let (sender, receiver) = mpsc::channel();
@@ -95,7 +99,6 @@ impl Coordinator {
         self.cancel = Some(cancel);
         self.receiver = Some(receiver);
         self.running = true;
-        self.latest_snapshot = None;
 
         let handle = thread::spawn(move || {
             run::run_mcts(move_sequence, config, cancel_clone, sender);
