@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/code/rust-chess/**)",
+      "Bash(wc -l /c/code/rust-chess/src/*.rs)",
+      "Bash(find /c/code/rust-chess/src -type f -name \"*.rs\" -exec wc -l {} +)",
+      "WebFetch(domain:lczero.org)"
+    ]
+  }
+}
