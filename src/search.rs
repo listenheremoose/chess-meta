@@ -190,13 +190,10 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
 
         // Q value from side-to-move perspective
         let q = if child.visit_count == 0 {
-            // FPU: first play urgency
-            let fpu = if is_white_turn {
-                parent_q - config.fpu_reduction
-            } else {
-                parent_q + config.fpu_reduction
-            };
-            fpu
+            // FPU: Q_fpu = Q_parent_stm - fpu_reduction
+            // parent_q is White's perspective; convert to side-to-move first
+            let parent_q_stm = if is_white_turn { parent_q } else { 1.0 - parent_q };
+            parent_q_stm - config.fpu_reduction
         } else {
             let q_white = child.q_value();
             if is_white_turn {
@@ -283,11 +280,12 @@ pub fn backpropagate(tree: &mut SearchTree, leaf_id: u64, value_white: f64) {
 /// Returns (uci_move, blended_prior) pairs.
 pub fn candidate_moves_max(
     engine_policy: &HashMap<String, f32>,
+    engine_q_values: &HashMap<String, f32>,
     maia_policy: &HashMap<String, f32>,
     config: &Config,
 ) -> Vec<(String, f64)> {
-    // Top N engine moves by policy
-    let mut engine_sorted: Vec<_> = engine_policy.iter().collect();
+    // Top N engine moves by Q-value (objectively strongest)
+    let mut engine_sorted: Vec<_> = engine_q_values.iter().collect();
     engine_sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     let engine_top: Vec<&String> = engine_sorted
         .iter()
@@ -532,11 +530,18 @@ mod tests {
 
     #[test]
     fn test_candidate_moves_max() {
-        let mut engine = HashMap::new();
-        engine.insert("e2e4".to_string(), 50.0f32);
-        engine.insert("d2d4".to_string(), 30.0);
-        engine.insert("g1f3".to_string(), 10.0);
-        engine.insert("c2c4".to_string(), 5.0);
+        let mut engine_policy = HashMap::new();
+        engine_policy.insert("e2e4".to_string(), 50.0f32);
+        engine_policy.insert("d2d4".to_string(), 30.0);
+        engine_policy.insert("g1f3".to_string(), 10.0);
+        engine_policy.insert("c2c4".to_string(), 5.0);
+
+        // Q values determine which engine moves are candidates (top 3 by Q)
+        let mut engine_q = HashMap::new();
+        engine_q.insert("e2e4".to_string(), 0.06f32);
+        engine_q.insert("d2d4".to_string(), 0.05);
+        engine_q.insert("g1f3".to_string(), 0.04);
+        engine_q.insert("c2c4".to_string(), 0.03);
 
         let mut maia = HashMap::new();
         maia.insert("e2e4".to_string(), 40.0f32);
@@ -547,7 +552,7 @@ mod tests {
         maia.insert("e2e3".to_string(), 3.0);
 
         let config = Config::default();
-        let candidates = candidate_moves_max(&engine, &maia, &config);
+        let candidates = candidate_moves_max(&engine_policy, &engine_q, &maia, &config);
 
         // Should have top 3 engine + top 5 maia, deduped
         assert!(!candidates.is_empty());

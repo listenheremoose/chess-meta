@@ -310,7 +310,7 @@ fn expand_and_evaluate(
 
     // Expand children based on node type
     let candidates = match node_type {
-        NodeType::Max => candidate_moves_max(&engine_eval.policy, &maia_policy, config),
+        NodeType::Max => candidate_moves_max(&engine_eval.policy, &engine_eval.q_values, &maia_policy, config),
         NodeType::Chance => candidate_moves_chance(&maia_policy, config),
     };
 
