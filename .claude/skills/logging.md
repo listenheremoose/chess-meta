@@ -15,10 +15,10 @@ No logging dependencies — use `println!` and `eprintln!` only.
 Use `eprintln!` for errors and warnings, `println!` for informational and debug output. Distinguish severity with prefixes:
 
 ```rust
-eprintln!("[ERROR] Failed to load game: {err}");
-eprintln!("[WARN] Move took 2.3s to compute");
-println!("[INFO] Game started");
-println!("[DEBUG] Evaluating position: material={material}");
+eprintln!("[ERROR] lc0 process crashed: {err}");
+eprintln!("[WARN] lc0 memory exceeds threshold, restarting");
+println!("[INFO] Search started position={position_key} max_iterations={max}");
+println!("[DEBUG] Node expanded epd={epd} value={value}");
 ```
 
 ## What to Log
@@ -27,20 +27,19 @@ println!("[DEBUG] Evaluating position: material={material}");
 
 Log everything useful — no restraint needed:
 
-- **Errors** — anything that fails or is unexpected
-- **Warnings** — slow operations, fallback behavior
-- **State transitions** — game start/end, turn changes, check/checkmate, captures, castling, promotion
-- **Analysis events** — position loaded, analysis started/completed, results summary
-- **All move candidates considered** — with evaluation scores
-- **Configuration** — startup settings, window size, loaded options
+- **Errors** — lc0 crashes, UCI parse failures, SQLite errors
+- **Warnings** — lc0 memory growth, slow evaluations, engine restarts
+- **State transitions** — search started/paused/resumed/completed, engine process spawned/killed
+- **Search milestones** — every 100 iterations: best move, Q-value, visit distribution
+- **Configuration** — startup settings, engine paths, search parameters
 
 ### Performance-critical code (behind feature flag)
 
-Search, evaluation, and move generation are hot paths. Log nothing by default. Use a compile-time feature flag for optional tracing:
+The MCTS inner loop (selection, expansion, backprop) is the hot path. Log nothing by default. Use a compile-time feature flag for optional tracing:
 
 ```rust
 #[cfg(feature = "search-trace")]
-println!("[TRACE] depth={depth} nodes={nodes} score={score} pv={pv}");
+println!("[TRACE] iteration={iteration} selected={node_id} depth={depth}");
 ```
 
 In `Cargo.toml`:
@@ -53,17 +52,17 @@ search-trace = []
 Enable with `cargo build --features search-trace`. When disabled, these lines are compiled out entirely — zero overhead.
 
 Hot paths that must be log-free by default:
-- Move generation
-- Position evaluation
-- Search tree traversal
-- Board state updates during search
+- PUCT selection traversal
+- Maia sampling
+- Backpropagation
+- Tree node creation
 
 Log before and after the search in normal builds:
 
 ```rust
-println!("[INFO] Search started depth={max_depth} position={fen}");
-// ... search runs with no logging (unless search-trace enabled) ...
-println!("[INFO] Search complete depth={depth} nodes={nodes} best={best_move} score={score}");
+println!("[INFO] Search started iterations={max} position={position_key}");
+// ... MCTS runs with no logging (unless search-trace enabled) ...
+println!("[INFO] Search complete iterations={count} best={best_move} practical_q={q}");
 ```
 
 ## Log Format
@@ -71,9 +70,9 @@ println!("[INFO] Search complete depth={depth} nodes={nodes} best={best_move} sc
 Structured with context — include relevant data inline:
 
 ```rust
-println!("[INFO] Move applied piece=Knight from=G1 to=F3");
-println!("[DEBUG] Legal moves count=23 for=White");
-eprintln!("[ERROR] Invalid square index={index}");
+println!("[INFO] Engine initialized path={path} weights={weights}");
+println!("[DEBUG] Cache hit epd={epd} nodes={nodes_searched}");
+eprintln!("[ERROR] UCI parse failed line={line}");
 ```
 
 ## Repeated Events
@@ -81,17 +80,14 @@ eprintln!("[ERROR] Invalid square index={index}");
 Log first occurrence, then summarize:
 
 ```rust
-// Instead of logging "Invalid input" 50 times:
-eprintln!("[WARN] Invalid input repeated count=12");
+// Instead of logging "Cache hit" 5000 times:
+println!("[INFO] Search complete cache_hits={hits} cache_misses={misses}");
 ```
 
 ## Output Destination
 
-Log to both stderr and a file. Errors and warnings go to stderr, everything goes to the log file. Store log files in `./logs/`.
-
-## Log Rotation
-
-Rotate log files at 1MB. Keep the last 10 files, delete older ones.
+Log to stderr only (`eprintln!` for errors/warnings, `println!` for info/debug goes to stdout).
+Redirect to a file at the shell level if persistent logs are needed: `chess-meta 2>&1 | tee logs/run.log`
 
 ## Logging in Tests
 

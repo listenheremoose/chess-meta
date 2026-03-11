@@ -20,6 +20,10 @@ Before adding a crate, it must be:
 ## Approved Dependencies
 
 - `iced` — UI framework
+- `shakmaty` — chess position logic, move generation, game-over detection
+- `rusqlite` — SQLite for caching engine evals, Maia policies, and MCTS tree persistence
+- `serde` + `serde_json` — serialization for cache storage and config
+- `rand` — weighted random sampling for Maia distributions at CHANCE nodes
 - `criterion` — benchmarking (dev-dependency)
 - `insta` — snapshot testing (dev-dependency)
 

@@ -16,10 +16,10 @@ Name tests as `<scenario>_<expected>`:
 
 ```rust
 #[test]
-fn pinned_piece_cannot_move() { ... }
+fn max_node_selects_highest_puct_child() { ... }
 
 #[test]
-fn castling_clears_rook_square() { ... }
+fn chance_node_samples_from_maia_distribution() { ... }
 ```
 
 ## Assertions
@@ -31,22 +31,22 @@ Standard library only — `assert!`, `assert_eq!`, `assert_ne!`. No assertion cr
 Use the builder pattern for constructing test state:
 
 ```rust
-let board = BoardBuilder::new()
-    .with_piece(King, White, E1)
-    .with_piece(Rook, Black, E8)
+let tree = TreeBuilder::new()
+    .with_root("e2e4 e7e5", NodeType::Max)
+    .with_child("g1f3", 0.58, 1200)
+    .with_child("d2d4", 0.61, 800)
     .build();
 ```
 
-## Board State
+## Position Setup
 
-Express positions programmatically, not with FEN strings:
+Use move sequences for test positions (matching the app's internal representation):
 
 ```rust
 // Yes
-board.place(King, E1);
+let position = position_from_moves(&["e2e4", "e7e5", "g1f3"]);
 
-// Avoid
-Board::from_fen("8/8/8/8/8/8/8/4K3 w - - 0 1")
+// Avoid raw FEN in tests unless testing FEN-specific functionality
 ```
 
 ## Test Ordering
@@ -54,28 +54,28 @@ Board::from_fen("8/8/8/8/8/8/8/4K3 w - - 0 1")
 Group tests by scenario/feature. Within each group, failure cases first, then successes:
 
 ```rust
-// -- Castling --
+// -- PUCT Selection --
 
 #[test]
-fn castling_blocked_by_check_fails() { ... }
+fn puct_with_zero_visits_uses_fpu_reduction() { ... }
 
 #[test]
-fn castling_through_attacked_square_fails() { ... }
+fn puct_with_no_children_returns_none() { ... }
 
 #[test]
-fn castling_kingside_moves_both_pieces() { ... }
+fn puct_selects_high_prior_when_all_unvisited() { ... }
 
 #[test]
-fn castling_queenside_moves_both_pieces() { ... }
+fn puct_balances_exploration_and_exploitation() { ... }
 ```
 
 ## Test Scope
 
 Test at all levels:
 
-- **Unit tests** — core logic: move generation, check/checkmate, game rules
-- **Integration tests** — full game flow: multi-move sequences, complete games
-- **Snapshot tests** — use `insta` to capture board rendering, move lists, and complex state; commit `.snap` files to version control
+- **Unit tests** — core logic: PUCT selection, Maia sampling, backpropagation, value conversion
+- **Integration tests** — full MCTS iteration cycles, UCI parse → evaluate → backprop flows
+- **Snapshot tests** — use `insta` to capture tree state, move rankings, and search progress; commit `.snap` files to version control
 
 ## Coverage
 

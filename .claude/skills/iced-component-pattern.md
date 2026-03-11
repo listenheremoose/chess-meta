@@ -6,11 +6,11 @@ globs: src/**/*.rs
 
 # Iced Component Pattern
 
-When creating a new component, follow this template. Each component lives in its own file under `src/`.
+When creating a new component, follow this template. Each component lives in its own file under `src/` or `src/ui/`.
 
 ## Template
 
-Components only hold UI-specific state. Shared domain state (like `Game`) is passed in via `update` and `view` parameters.
+Components only hold UI-specific state. Shared domain state (like `SearchState`) is passed in via `update` and `view` parameters.
 
 ```rust
 use iced::widget::text;
@@ -32,7 +32,7 @@ pub struct Foo {
 }
 
 impl Foo {
-    // Accept &mut Game (or other shared state) if the component needs to read/write it
+    // Accept &mut SearchState (or other shared state) if the component needs to read/write it
     pub fn update(&mut self, message: FooMessage) -> Option<FooAction> {
         match message {
             // Handle messages, return Some(action) for cross-component effects
@@ -40,7 +40,7 @@ impl Foo {
         None
     }
 
-    // Accept &Game (or other shared state) if the component needs to display it
+    // Accept &SearchState (or other shared state) if the component needs to display it
     pub fn view(&self) -> Element<'_, FooMessage> {
         text("Foo").into()
     }
@@ -49,12 +49,12 @@ impl Foo {
 
 ## Wiring into the app
 
-1. Add `mod foo;` to `main.rs`
+1. Add `mod foo;` to the appropriate parent module (e.g., `ui/mod.rs` for UI components)
 2. Add `use foo::{Foo, FooMessage};` import
 3. Add `foo: Foo` field to `ChessMeta`
 4. Add `Foo(FooMessage)` variant to `Message`
-5. Add routing arm in `update()` — pass `&mut state.game` if needed, handle returned actions
-6. Add `state.foo.view().map(Message::Foo)` in `view()` — pass `&state.game` if needed
+5. Add routing arm in `update()` — pass `&mut state.search` if needed, handle returned actions
+6. Add `state.foo.view().map(Message::Foo)` in `view()` — pass `&state.search` if needed
 
 ## Rust 2024 edition note
 

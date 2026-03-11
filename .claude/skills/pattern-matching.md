@@ -15,24 +15,18 @@ Factor multi-line logic into separate functions so match statements stay readabl
 ```rust
 // Yes — each arm is a single call, control flow is clear
 match message {
-    Msg::Click(position) => handle_click(position, &mut board),
-    Msg::Promote(piece) => handle_promotion(piece, &mut board),
-    Msg::Castle(side) => handle_castle(side, &mut board),
+    Msg::StartSearch(position) => start_search(position, &mut coordinator),
+    Msg::PauseSearch => pause_search(&mut coordinator),
+    Msg::NodeClicked(node_id) => select_node(node_id, &mut tree_view),
 }
 
 // No — inline multi-line logic obscures the match structure
 match message {
-    Msg::Click(position) => {
-        let piece = board.get(position);
-        if piece.color == turn {
-            selected = Some(position);
-            highlights = legal_moves(position, &board);
-        }
-    }
-    Msg::Promote(piece) => {
-        board.set(position, piece);
-        turn = turn.opposite();
-        check_game_over(&board);
+    Msg::StartSearch(position) => {
+        let config = build_config(&settings);
+        coordinator.reset();
+        coordinator.start(position, config);
+        status = SearchStatus::Running;
     }
     // ...
 }
@@ -43,7 +37,7 @@ match message {
 Destructure as much as possible:
 
 ```rust
-let Piece { color, kind, has_moved } = piece;
+let TreeNode { visit_count, value_sum, node_type, .. } = node;
 ```
 
 ## Nested Patterns
@@ -51,9 +45,9 @@ let Piece { color, kind, has_moved } = piece;
 Flatten with nested patterns rather than matching then destructuring:
 
 ```rust
-match state {
-    Game { board, turn: Color::White, .. } => handle_white(board),
-    Game { board, turn: Color::Black, .. } => handle_black(board),
+match node {
+    TreeNode { node_type: NodeType::Max, .. } => select_by_puct(node),
+    TreeNode { node_type: NodeType::Chance, .. } => sample_by_maia(node),
 }
 ```
 
@@ -62,10 +56,10 @@ match state {
 Prefer match guards over nested matches:
 
 ```rust
-match piece {
-    Some(piece) if piece.color == turn => select(piece),
-    Some(_) => show_error(),
-    None => deselect(),
+match child {
+    Some(node) if node.visit_count > threshold => expand_further(node),
+    Some(_) => skip_low_visit_node(),
+    None => create_and_evaluate(),
 }
 ```
 
@@ -75,33 +69,33 @@ Prefer `match` over `if let`, `let-else`, and `matches!`. Always use full `match
 
 ```rust
 // Yes — full match
-match selected {
-    Some(piece) => move_piece(piece),
+match cached_eval {
+    Some(result) => use_cached(result),
     None => {}
 }
 
 // No — if let
-if let Some(piece) = selected {
-    move_piece(piece);
+if let Some(result) = cached_eval {
+    use_cached(result);
 }
 
 // Yes — full match for early return
-match selected {
-    Some(piece) => piece,
+match cached_eval {
+    Some(result) => result,
     None => return,
 }
 
 // No — let-else
-let Some(piece) = selected else { return };
+let Some(result) = cached_eval else { return };
 
 // Yes — full match for boolean checks
-let major_piece = match piece.kind {
-    Rook | Queen => true,
+let high_confidence = match node.visit_count {
+    count if count > 500 => true,
     _ => false,
 };
 
 // No — matches! macro
-let major_piece = matches!(piece.kind, Rook | Queen);
+let high_confidence = node.visit_count > 500;
 ```
 
 ## Or-Patterns
@@ -109,45 +103,36 @@ let major_piece = matches!(piece.kind, Rook | Queen);
 Group related variants freely:
 
 ```rust
-match piece.kind {
-    Rook | Queen => can_move_straight(from, to),
-    Bishop | Queen => can_move_diagonal(from, to),
-    _ => false,
+match node_type {
+    NodeType::Max => select_by_puct(node),
+    NodeType::Chance => sample_by_maia(node),
 }
 ```
 
 ## Tuple and Slice Patterns
 
-Use freely and prefer them when possible for coordinates, state combos, and sequences:
+Use freely and prefer them when possible for state combos and sequences:
 
 ```rust
-// Coordinate matching
-match (row, column) {
-    (0, 0) | (0, 7) | (7, 0) | (7, 7) => corner_square(),
-    (0, _) | (7, _) => edge_row(),
-    (_, 0) | (_, 7) => edge_column(),
-    _ => inner_square(),
-}
-
 // State combinations
-match (selected, clicked) {
-    (None, Some(piece)) => select(piece),
-    (Some(from), Some(to)) => try_move(from, to),
-    (Some(_), None) => deselect(),
-    (None, None) => {}
+match (search_status, has_maia_data) {
+    (SearchStatus::Running, true) => continue_with_maia(node),
+    (SearchStatus::Running, false) => evaluate_without_maia(node),
+    (SearchStatus::Paused, _) => show_partial_results(),
+    (SearchStatus::Idle, _) => {}
 }
 
 // Binding within tuples
-match (piece.kind, to_row) {
-    (Pawn, 0 | 7) => promote(piece),
-    (Pawn, row) if (row as i8 - from_row as i8).abs() == 2 => en_passant_possible(),
-    _ => normal_move(),
+match (node.node_type, node.visit_count) {
+    (NodeType::Max, 0) => use_fpu_reduction(node),
+    (NodeType::Max, count) => select_puct(node, count),
+    (NodeType::Chance, _) => sample_maia(node),
 }
 
 // Slice patterns
-match moves.as_slice() {
-    [] => text("No moves yet"),
-    [only] => text!("1. {only}"),
-    [.., last] => text!("Last move: {last}"),
+match candidates.as_slice() {
+    [] => text("No candidates"),
+    [only] => text!("Single candidate: {only}"),
+    [best, ..] => text!("Best: {best} (+{} more)", candidates.len() - 1),
 }
 ```

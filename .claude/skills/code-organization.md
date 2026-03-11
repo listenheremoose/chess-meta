@@ -19,12 +19,13 @@ Split when:
 Keep files under ~200 lines. When a file grows past this, split into a directory module:
 
 ```
-// Before: src/board_ui.rs (getting too long)
+// Before: src/search.rs (getting too long)
 
 // After:
-// src/board_ui/mod.rs        — public API, re-exports
-// src/board_ui/moves.rs      — move logic
-// src/board_ui/rendering.rs  — view helpers
+// src/search/mod.rs          — public API, re-exports
+// src/search/selection.rs    — PUCT selection logic
+// src/search/expansion.rs    — node expansion and evaluation
+// src/search/backprop.rs     — backpropagation
 ```
 
 ## Comments
@@ -39,17 +40,17 @@ All public items get doc comments. Skip restating what the name already says —
 
 ```rust
 // Redundant — skip this
-/// Returns the color of the piece
-fn color(&self) -> Color
+/// Returns the visit count
+fn visit_count(&self) -> u32
 
 // Useful — clarifies non-obvious behavior
-/// Returns valid destinations, excluding moves that would
-/// leave the king in check
-fn legal_moves_for_piece(board: &Board, piece: &Piece) -> Vec<Move>
+/// Selects a child using PUCT, converting stored White-perspective Q values
+/// to side-to-move perspective for comparison
+fn select_child_puct(node: &TreeNode, config: &SearchConfig) -> NodeId
 
-/// Scores favor white (positive) over black (negative),
-/// measured in centipawns
-fn material_balance(board: &Board) -> i32
+/// Value from White's perspective in [0, 1]. Draws are scored
+/// using the contempt parameter (0.5 = neutral, 0.6 = slightly favor us)
+fn value_for_backprop(wdl: (u32, u32, u32), contempt: f64) -> f64
 ```
 
 ### TODO/FIXME
@@ -57,16 +58,16 @@ fn material_balance(board: &Board) -> i32
 Must reference an issue number:
 
 ```rust
-// TODO(#42): handle en passant edge case
+// TODO(#12): add periodic ucinewgame to prevent memory leaks
 ```
 
 ### Section Comments
 
 No section comments — if you need them, the file should be split into a directory module instead.
 
-### Chess Domain
+### Domain Knowledge
 
-Assume the reader knows chess. No comments explaining standard rules.
+Assume the reader knows chess and basic MCTS concepts. No comments explaining UCI protocol basics or standard tree search terminology.
 
 ## Iteration
 
@@ -74,8 +75,8 @@ Prefer iterating over collections/slices rather than index ranges:
 
 ```rust
 // Yes
-board.rows().map(|row| ...)
+node.children().filter(|child| child.visit_count > 0)
 
 // Avoid
-(0..BOARD_SIZE).map(|row| ...)
+(0..node.child_count()).filter(|index| node.child(index).visit_count > 0)
 ```

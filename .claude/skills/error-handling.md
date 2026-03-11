@@ -11,11 +11,11 @@ globs: src/**/*.rs
 Use `Result<T, E>` everywhere. Propagate with `?`:
 
 ```rust
-fn parse_fen(fen: &str) -> Result<Board, ParseError> {
-    let parts = split_fen(fen)?;
-    let pieces = parse_pieces(parts.pieces)?;
-    let side = parse_side(parts.side)?;
-    Ok(Board::new(pieces, side))
+fn query_engine(position_key: &str, epd: &str) -> Result<EngineResult, EngineError> {
+    let engine = acquire_engine(&lc0_path, &weights_path)?;
+    engine.send_position(position_key)?;
+    let output = engine.go_nodes(1)?;
+    parse_engine_output(&output)
 }
 ```
 
@@ -24,18 +24,19 @@ fn parse_fen(fen: &str) -> Result<Board, ParseError> {
 Define custom error enums per module:
 
 ```rust
-// board/error.rs
-enum BoardError {
-    InvalidSquare { index: u8 },
-    NoPieceAt { square: Square },
-    OccupiedSquare { square: Square, existing: Piece },
+// engine/error.rs
+enum EngineError {
+    ProcessSpawnFailed { path: String, source: std::io::Error },
+    UciProtocolError { expected: String, got: String },
+    ProcessCrashed { stderr: String },
+    Cancelled,
 }
 
-// parse/error.rs
-enum ParseError {
-    InvalidFen { fen: String, reason: String },
-    InvalidPiece { char: char, rank: u8 },
-    InvalidSquare { notation: String },
+// cache/error.rs
+enum CacheError {
+    DatabaseOpen { path: PathBuf, source: rusqlite::Error },
+    QueryFailed { query: String, source: rusqlite::Error },
+    SerializationFailed { source: serde_json::Error },
 }
 ```
 
@@ -44,13 +45,13 @@ enum ParseError {
 Include relevant data in error variants, and chain context when errors cross boundaries:
 
 ```rust
-enum ParseError {
-    InvalidPiece { char: char, rank: u8 },
+enum EngineError {
+    UciProtocolError { expected: String, got: String },
 }
 
-enum LoadError {
-    Parse { source: ParseError, fen: String },
-    Io { source: std::io::Error, path: PathBuf },
+enum SearchError {
+    Engine { source: EngineError, position: String },
+    Cache { source: CacheError, epd: String },
 }
 ```
 
@@ -64,9 +65,9 @@ Never use `.unwrap()` or `.expect()`. Always handle the error explicitly:
 
 ```rust
 // Yes
-let piece = board.piece_at(square).ok_or(BoardError::NoPieceAt { square })?;
+let node = tree.get(node_id).ok_or(SearchError::NodeNotFound { node_id })?;
 
 // Never
-let piece = board.piece_at(square).unwrap();
-let piece = board.piece_at(square).expect("should have piece");
+let node = tree.get(node_id).unwrap();
+let node = tree.get(node_id).expect("node should exist");
 ```

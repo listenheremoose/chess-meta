@@ -19,7 +19,8 @@ use iced::widget::{button, column, row, text};
 Import specific variants, no wildcards:
 
 ```rust
-use PieceKind::{King, Queen, Rook, Bishop, Knight, Pawn};
+use NodeType::{Max, Chance};
+use SearchStatus::{Idle, Running, Paused};
 ```
 
 ## String Formatting
@@ -27,7 +28,7 @@ use PieceKind::{King, Queen, Rook, Bishop, Knight, Pawn};
 Prefer inline format strings and `text!` macro:
 
 ```rust
-text!("Turn: {turn}")
+text!("Iterations: {iteration_count}")
 ```
 
 ## Match Arms
@@ -36,8 +37,8 @@ Keep arms single-line. Factor multi-line logic into separate functions (see patt
 
 ```rust
 match message {
-    Msg::Click => handle_click(state),
-    Msg::Reset => reset_game(state),
+    Msg::StartSearch => start_search(state),
+    Msg::PauseSearch => pause_search(state),
 }
 ```
 
@@ -46,7 +47,7 @@ match message {
 One method per line:
 
 ```rust
-column![board, menu]
+column![controls, main_panels, progress]
     .spacing(10)
     .padding(20)
     .align_x(Center)
@@ -57,9 +58,9 @@ column![board, menu]
 First method on a new line:
 
 ```rust
-pieces
+children
     .iter()
-    .filter(Piece::is_white)
+    .filter(TreeNode::is_expanded)
     .count()
 ```
 
@@ -68,15 +69,9 @@ pieces
 Implicit return — no `return` keyword, no trailing semicolon:
 
 ```rust
-fn piece_value(kind: PieceKind) -> i32 {
-    match kind {
-        Pawn => 100,
-        Knight => 300,
-        Bishop => 300,
-        Rook => 500,
-        Queen => 900,
-        King => 0,
-    }
+fn value_for_backprop(wdl: (u32, u32, u32), contempt: f64) -> f64 {
+    let (win, draw, loss) = wdl;
+    win as f64 / 1000.0 + contempt * draw as f64 / 1000.0
 }
 ```
 
@@ -106,6 +101,6 @@ where
 Extract to variables when nesting more than 2 levels:
 
 ```rust
-let action = state.menu.update(message);
-handle_menu_action(action, &mut state.game);
+let action = state.controls.update(message);
+handle_controls_action(action, &mut state.search);
 ```

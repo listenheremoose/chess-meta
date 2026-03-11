@@ -18,16 +18,16 @@ Always use iterator chains, never `for` loops:
 
 ```rust
 // Yes
-let white_pieces = pieces
-    .iter()
-    .filter(|piece| piece.color == Color::White)
+let high_visit_nodes = tree
+    .children(root_id)
+    .filter(|node| node.visit_count > threshold)
     .collect::<Vec<_>>();
 
 // No
-let mut white_pieces = Vec::new();
-for piece in &pieces {
-    if piece.color == Color::White {
-        white_pieces.push(piece);
+let mut high_visit_nodes = Vec::new();
+for node in tree.children(root_id) {
+    if node.visit_count > threshold {
+        high_visit_nodes.push(node);
     }
 }
 ```
@@ -38,16 +38,16 @@ Use `match` over combinators like `map`, `and_then`, `unwrap_or` (consistent wit
 
 ```rust
 // Yes
-let piece_name = match board.get(row, column) {
-    Some(piece) if piece.color == turn => piece.name(),
-    _ => "empty",
+let eval_value = match engine_cache.get(&epd) {
+    Some(result) if result.nodes_searched >= min_nodes => result.q_value,
+    _ => evaluate_position(&position),
 };
 
 // No
-let piece_name = board.get(row, column)
-    .filter(|piece| piece.color == turn)
-    .map(|piece| piece.name())
-    .unwrap_or("empty");
+let eval_value = engine_cache.get(&epd)
+    .filter(|result| result.nodes_searched >= min_nodes)
+    .map(|result| result.q_value)
+    .unwrap_or_else(|| evaluate_position(&position));
 ```
 
 ## Function Composition
@@ -56,15 +56,15 @@ Prefer point-free style where possible. When closures are needed, use descriptiv
 
 ```rust
 // Best — point-free method reference
-pieces
+children
     .iter()
-    .filter(Piece::is_white)
-    .map(Piece::name)
+    .filter(TreeNode::is_expanded)
+    .map(TreeNode::q_value)
 
 // OK — closure with descriptive name when logic requires it
-pieces
+children
     .iter()
-    .filter(|piece| piece.color == Color::White)
+    .filter(|child| child.visit_count > min_visits)
 ```
 
 ## Fold and Accumulation
@@ -73,21 +73,20 @@ Use specialized methods (`sum`, `count`, `any`, `all`) when available. Use `fold
 
 ```rust
 // Specialized
-let score: i32 = pieces
+let total_visits: u32 = children
     .iter()
-    .map(Piece::value)
+    .map(TreeNode::visit_count)
     .sum();
 
-let king_present = pieces
+let has_converged = children
     .iter()
-    .any(|piece| piece.kind == King);
+    .all(|child| child.q_stable());
 
 // Custom accumulation with fold
-let material_balance = pieces
+let weighted_value = maia_moves
     .iter()
-    .fold(0, |accumulator, piece| match piece.color {
-        Color::White => accumulator + piece.value(),
-        Color::Black => accumulator - piece.value(),
+    .fold(0.0, |accumulator, candidate| {
+        accumulator + candidate.maia_probability * candidate.child_q_value
     });
 ```
 
@@ -96,8 +95,8 @@ let material_balance = pieces
 Default immutable, only `mut` when required:
 
 ```rust
-let board = Board::new();
-let mut turn = Color::White;  // only when mutation is needed
+let config = SearchConfig::default();
+let mut iteration_count = 0;  // only when mutation is needed
 ```
 
 ## Chain Length
@@ -105,13 +104,18 @@ let mut turn = Color::White;  // only when mutation is needed
 Break into named intermediate variables after 3-4 steps:
 
 ```rust
-let my_pieces = board
-    .squares()
-    .filter(Square::has_piece)
-    .filter(|square| square.piece().color == turn);
+let mut by_engine = moves.to_vec();
+by_engine.sort_by(|a, b| b.q_value.partial_cmp(&a.q_value).unwrap_or(Ordering::Equal));
+let engine_candidates = &by_engine[..3.min(by_engine.len())];
 
-let result = my_pieces
-    .flat_map(|square| square.piece().legal_moves(&board))
-    .filter(|chess_move| !chess_move.leaves_king_in_check(&board))
-    .collect::<Vec<_>>();
+let mut by_maia = moves.to_vec();
+by_maia.sort_by(|a, b| b.maia_policy.partial_cmp(&a.maia_policy).unwrap_or(Ordering::Equal));
+let maia_candidates = &by_maia[..5.min(by_maia.len())];
+
+let mut all_candidates = engine_candidates.to_vec();
+all_candidates.extend(
+    maia_candidates
+        .iter()
+        .filter(|candidate| !all_candidates.iter().any(|existing| existing.uci_move == candidate.uci_move)),
+);
 ```

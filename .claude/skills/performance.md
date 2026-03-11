@@ -1,6 +1,6 @@
 ---
 name: Performance
-description: Performance conventions for chess analysis
+description: Performance conventions for MCTS analysis
 globs: src/**/*.rs
 ---
 
@@ -10,52 +10,53 @@ globs: src/**/*.rs
 
 Avoid heap allocation in hot paths:
 
-- Use stack-allocated fixed-size arrays for bounded data (e.g. `[Move; 256]` for move lists)
-- Pre-allocate and reuse buffers for variable-size data
-- Never allocate inside search, evaluation, or move generation loops
+- Pre-allocate tree node storage (arena or Vec-based)
+- Reuse buffers for UCI communication strings
+- Never allocate inside the MCTS selection/backprop loop
 
 ```rust
-// Yes — stack array, no allocation
-let mut moves = [Move::NONE; 256];
-let count = generate_moves(&board, &mut moves);
+// Yes — pre-allocated path buffer reused across iterations
+let mut path = Vec::with_capacity(64);
+path.clear();
+select(&tree, root, &mut path);
 
-// Avoid — allocates on every call
-fn generate_moves(board: &Board) -> Vec<Move> { ... }
+// Avoid — allocates on every iteration
+fn select(tree: &Tree, root: NodeId) -> Vec<NodeId> { ... }
 ```
 
-## Board Representation
+## Position Representation
 
-Use bitboards — one `u64` per piece type/color. Use bitwise operations for attack/pin/check computation instead of looping over squares.
+Use `shakmaty` for position logic (legal moves, game-over detection). Cache EPD strings and move paths on tree nodes to avoid recomputation.
 
 ## Copy vs Reference
 
-Derive `Copy` for small types (`Move`, `Square`, `Piece`, `Color`, `Bitboard`). Pass by value, not reference.
+Derive `Copy` for small types (`NodeId`, `NodeType`, `SearchStatus`). Pass by value, not reference.
 
 ```rust
 #[derive(Clone, Copy)]
-struct Move { /* 2-4 bytes */ }
+struct NodeId(u32);
 
 // Yes — by value
-fn make_move(board: &mut Board, mv: Move) { ... }
+fn get_node(tree: &Tree, node_id: NodeId) -> &TreeNode { ... }
 
 // Avoid for tiny types
-fn make_move(board: &mut Board, mv: &Move) { ... }
+fn get_node(tree: &Tree, node_id: &NodeId) -> &TreeNode { ... }
 ```
 
 ## Profiling
 
 Use both approaches:
 
-- **`criterion`** — benchmark critical paths (move generation, evaluation, search). Run regularly to catch regressions.
+- **`criterion`** — benchmark critical paths (PUCT selection, tree traversal, UCI parsing). Run regularly to catch regressions.
 - **Flamegraphs** — for investigation when optimizing. Use `cargo flamegraph` or a system profiler.
 
 Add benchmarks in `benches/` using `criterion`:
 
 ```rust
-fn bench_move_gen(c: &mut Criterion) {
-    let board = Board::starting_position();
-    c.bench_function("generate_moves", |b| {
-        b.iter(|| board.generate_moves())
+fn bench_puct_selection(c: &mut Criterion) {
+    let tree = build_test_tree(1000);
+    c.bench_function("puct_selection", |b| {
+        b.iter(|| select_child_puct(&tree, root_id, &config))
     });
 }
 ```
@@ -70,15 +71,15 @@ Use `#[inline]` on small hot functions when profiling shows it helps. Don't add 
 
 ```rust
 #[inline]
-fn rank(self) -> u8 {
-    self.0 >> 3
+fn q_from_white_perspective(node: &TreeNode) -> f64 {
+    node.value_sum / node.visit_count as f64
 }
 ```
 
 ## Parallelism
 
-Single-threaded for now. Structure code to allow parallelism later:
+MCTS runs in a background thread, UI runs on the main thread. Communication via `Arc<Mutex<SearchSnapshot>>`.
 
-- Keep mutable state contained and explicit
-- Avoid global mutable state
-- Separate search state from shared board data
+- Keep mutable tree state owned by the search thread
+- The UI thread reads periodic snapshots (every ~100 iterations)
+- Engine/Maia processes are owned by the search thread (not shared)

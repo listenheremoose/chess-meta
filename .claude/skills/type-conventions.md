@@ -11,8 +11,8 @@ globs: src/**/*.rs
 Annotate only when the type isn't obvious from the right-hand side:
 
 ```rust
-let selected: Option<(usize, usize)> = None;  // annotate — not obvious
-let count = pieces.len();                       // skip — clearly usize
+let selected_node: Option<NodeId> = None;        // annotate — not obvious
+let visit_count = node.visit_count();             // skip — clearly u32
 ```
 
 ## Type Annotations — Closures
@@ -20,7 +20,7 @@ let count = pieces.len();                       // skip — clearly usize
 Let the compiler infer:
 
 ```rust
-let white_piece = |piece| piece.color == Color::White;
+let above_threshold = |node| node.visit_count > min_visits;
 ```
 
 ## Collect / Turbofish
@@ -28,7 +28,7 @@ let white_piece = |piece| piece.color == Color::White;
 Use turbofish on the method:
 
 ```rust
-let moves = legal_moves.collect::<Vec<Move>>();
+let candidates = filtered_moves.collect::<Vec<MoveInfo>>();
 ```
 
 ## Complex Types
@@ -36,7 +36,8 @@ let moves = legal_moves.collect::<Vec<Move>>();
 Use named types / type aliases for complex types:
 
 ```rust
-type Board = [[Option<Piece>; 8]; 8];
+type MaiaDistribution = HashMap<String, f32>;
+type NodeChildren = Vec<(String, Option<NodeId>)>;
 ```
 
 ## Struct Instantiation
@@ -44,8 +45,9 @@ type Board = [[Option<Piece>; 8]; 8];
 Use `..Default::default()` for partial initialization:
 
 ```rust
-let game = Game {
-    turn: Color::White,
+let config = SearchConfig {
+    max_iterations: 10_000,
+    contempt: 0.6,
     ..Default::default()
 };
 ```
@@ -55,8 +57,8 @@ let game = Game {
 Use the concrete type name, not `Self`:
 
 ```rust
-impl Board {
-    fn new() -> Board { ... }
+impl TreeNode {
+    fn new(node_type: NodeType) -> TreeNode { ... }
 }
 ```
 
@@ -81,6 +83,7 @@ Minimal — only `pub` what's needed outside the module.
 Use `const` at module level, no magic numbers:
 
 ```rust
-const BOARD_SIZE: usize = 8;
-const STARTING_FEN: &str = "rnbqkbnr/...";
-```
+const CPUCT_INIT: f64 = 1.5;
+const CPUCT_BASE: f64 = 19652.0;
+const FPU_REDUCTION: f64 = 0.3;
+const MAIA_MIN_PROBABILITY: f64 = 0.001;

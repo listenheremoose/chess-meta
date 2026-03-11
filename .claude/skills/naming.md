@@ -13,8 +13,8 @@ Be verbose and descriptive. Readability over brevity.
 Always use full descriptive names:
 
 ```rust
-let selected_piece = board.get(position);
-let legal_moves = generate_legal_moves(&board, selected_piece);
+let selected_node = tree.get(node_id);
+let candidate_moves = generate_candidates(&position, &engine_policy, &maia_policy);
 ```
 
 ## Iterator Variables
@@ -22,8 +22,8 @@ let legal_moves = generate_legal_moves(&board, selected_piece);
 Descriptive even in closures:
 
 ```rust
-pieces.iter().filter(|piece| piece.color == Color::White)
-squares.iter().map(|square| square.piece())
+nodes.iter().filter(|node| node.visit_count > threshold)
+children.iter().map(|child| child.q_value())
 ```
 
 ## Index Variables
@@ -31,8 +31,7 @@ squares.iter().map(|square| square.piece())
 Full descriptive names, no abbreviations:
 
 ```rust
-board[row][column]
-for (row_index, column_index) in positions { ... }
+for (move_index, candidate) in candidates.iter().enumerate() { ... }
 ```
 
 ## Booleans
@@ -40,8 +39,8 @@ for (row_index, column_index) in positions { ... }
 Read as natural English, no `is_`/`has_` prefix required:
 
 ```rust
-let in_checkmate = check_for_checkmate(&board);
-let castling_available = king.can_castle();
+let converged = check_convergence(&root, &metrics);
+let terminal = position.is_game_over();
 ```
 
 ## No Abbreviations
@@ -49,10 +48,10 @@ let castling_available = king.can_castle();
 Never abbreviate. Spell out fully:
 
 ```rust
-let position = (row, column);
-let destination = calculate_destination(piece, direction);
+let position = apply_move(&current, candidate);
+let iteration_count = coordinator.total_iterations();
 
-// Not: pos, col, src, dst
+// Not: pos, iter, eval, coord
 ```
 
 ## Function Names
@@ -60,9 +59,9 @@ let destination = calculate_destination(piece, direction);
 Descriptive and natural, not forced into verb-first. The name should clearly convey what the function does or returns:
 
 ```rust
-fn legal_moves_for_piece(board: &Board, piece: &Piece) -> Vec<Move>
-fn board_after_move(board: &Board, chess_move: &Move) -> Board
-fn pieces_attacking_square(board: &Board, square: Position) -> Vec<Piece>
+fn candidate_moves_for_position(position: &Chess, engine: &[MoveInfo], maia: &[MoveInfo]) -> Vec<UciMove>
+fn practical_score_for_move(node: &TreeNode) -> f64
+fn nodes_above_threshold(tree: &SearchTree, min_visits: u32) -> Vec<&TreeNode>
 ```
 
 ## Type / Struct Names
@@ -70,7 +69,7 @@ fn pieces_attacking_square(board: &Board, square: Position) -> Vec<Piece>
 Concise, with context implied by the module:
 
 ```rust
-struct Board { ... }        // in chess module, obviously a chess board
-enum Color { White, Black }
-struct History { ... }
+struct TreeNode { ... }       // in search module, obviously an MCTS node
+enum NodeType { Max, Chance }
+struct SearchConfig { ... }
 ```

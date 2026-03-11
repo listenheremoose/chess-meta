@@ -116,8 +116,8 @@ Copy patterns from rust-chess as needed, but this project has different concerns
 ## Code style
 
 - Rust 2024 edition
-- GUI framework: `iced` (in Cargo.toml but not yet used — may be used later for visualization)
+- GUI framework: `iced` for the dashboard UI
 - Chess logic: `shakmaty` crate (same as rust-chess)
 - Database: `rusqlite` for SQLite
-- Error handling: `String` errors for engine communication (matching rust-chess pattern)
+- Error handling: Custom error enums per module (see error-handling skill)
 - Keep modules focused — one concern per file
