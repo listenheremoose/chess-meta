@@ -23,7 +23,7 @@ pub(super) fn run_mcts(
     tx: mpsc::Sender<SearchSnapshot>,
 ) {
     let position = match PositionState::from_moves(&move_sequence) {
-        Ok(p) => p,
+        Ok(position) => position,
         Err(e) => { log::error!("Invalid position: {e}"); return; }
     };
 
@@ -66,7 +66,7 @@ pub(super) fn run_mcts(
             &mut tree, leaf_id, &config, &mut engine, &mut maia,
             cache.as_ref(), &mut cache_hits, &mut cache_misses,
         ) {
-            Ok(v) => v,
+            Ok(value) => value,
             Err(e) => { log::error!("Expand/evaluate error at iteration {iteration}: {e}"); break; }
         };
 
@@ -90,8 +90,8 @@ pub(super) fn run_mcts(
 
     let elapsed = start_time.elapsed().as_secs_f64();
     let moves = root_move_infos(&tree, &config);
-    let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("none");
-    let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+    let best = moves.first().map(|move_info| move_info.uci_move.as_str()).unwrap_or("none");
+    let best_q = moves.first().map(|move_info| move_info.practical_q).unwrap_or(0.0);
     log::info!(
         "Search complete iterations={iteration} best={best} practical_q={best_q:.4} nodes={} elapsed={elapsed:.1}s cache_hits={cache_hits} cache_misses={cache_misses}",
         tree.node_count()
@@ -167,8 +167,8 @@ fn repopulate_root_evals(mut tree: SearchTree, cache: Option<&Cache>, _config: &
 
 fn log_milestone(iteration: u64, tree: &SearchTree, config: &Config) {
     let moves = root_move_infos(tree, config);
-    let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("?");
-    let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+    let best = moves.first().map(|move_info| move_info.uci_move.as_str()).unwrap_or("?");
+    let best_q = moves.first().map(|move_info| move_info.practical_q).unwrap_or(0.0);
     log::info!(
         "Search milestone iteration={iteration} best={best} practical_q={best_q:.4} nodes={}",
         tree.node_count()

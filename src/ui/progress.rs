@@ -107,10 +107,10 @@ fn draw_best_move_timeline(
     // Assign colors to moves
     let move_colors = [colors::ACCENT, colors::BLUE, colors::ORANGE, colors::GREEN, colors::RED];
 
-    history.windows(2).enumerate().for_each(|(i, window)| {
+    history.windows(2).enumerate().for_each(|(segment_index, window)| {
         let start_x = window[0].0 as f32 / max_iter * width;
         let end_x = window[1].0 as f32 / max_iter * width;
-        let color = move_colors[i % move_colors.len()];
+        let color = move_colors[segment_index % move_colors.len()];
 
         frame.fill_rectangle(
             Point::new(start_x, band_y),
@@ -171,11 +171,11 @@ fn draw_q_sparkline(
 
     let min_q = q_history
         .iter()
-        .map(|(_, q)| *q)
+        .map(|(_, q_value)| *q_value)
         .fold(f64::MAX, f64::min);
     let max_q = q_history
         .iter()
-        .map(|(_, q)| *q)
+        .map(|(_, q_value)| *q_value)
         .fold(f64::MIN, f64::max);
     let q_range = (max_q - min_q).max(0.01);
 
@@ -183,9 +183,9 @@ fn draw_q_sparkline(
 
     let points: Vec<Point> = q_history
         .iter()
-        .map(|(iter, q)| {
-            let x = start_x + (*iter as f64 / max_iter) as f32 * spark_width;
-            let y = spark_y + spark_h - ((q - min_q) / q_range) as f32 * spark_h;
+        .map(|(iteration, q_value)| {
+            let x = start_x + (*iteration as f64 / max_iter) as f32 * spark_width;
+            let y = spark_y + spark_h - ((q_value - min_q) / q_range) as f32 * spark_h;
             Point::new(x, y)
         })
         .collect();

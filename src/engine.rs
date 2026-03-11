@@ -49,20 +49,20 @@ impl EngineEval {
     /// lc0's WDL is from the side-to-move's perspective, so `white_to_move` must be
     /// passed to flip W and L when Black is the side to move.
     pub fn value_white(&self, contempt: f64, white_to_move: bool) -> f64 {
-        let (w, d, l) = self.wdl;
+        let (wins, draws, losses) = self.wdl;
         if white_to_move {
             // W = White's wins, L = White's losses
-            w as f64 / 1000.0 + contempt * d as f64 / 1000.0
+            wins as f64 / 1000.0 + contempt * draws as f64 / 1000.0
         } else {
             // W = Black's wins (White's losses), L = Black's losses (White's wins)
-            l as f64 / 1000.0 + contempt * d as f64 / 1000.0
+            losses as f64 / 1000.0 + contempt * draws as f64 / 1000.0
         }
     }
 
     /// Get the top N moves by policy.
     #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn top_policy_moves(&self, n: usize) -> Vec<(String, f32)> {
-        let mut moves = self.policy.iter().map(|(m, p)| (m.clone(), *p)).collect::<Vec<_>>();
+        let mut moves = self.policy.iter().map(|(uci_move, policy_pct)| (uci_move.clone(), *policy_pct)).collect::<Vec<_>>();
         moves.sort_by(|a, b| match b.1.partial_cmp(&a.1) {
             Some(ord) => ord,
             None => std::cmp::Ordering::Equal,
@@ -177,11 +177,11 @@ impl Engine {
 
         let policy = verbose_stats
             .iter()
-            .map(|(uci_move, (p, _))| (uci_move.clone(), *p))
+            .map(|(uci_move, (policy_pct, _))| (uci_move.clone(), *policy_pct))
             .collect::<PolicyMap>();
         let q_values = verbose_stats
             .iter()
-            .filter_map(|(uci_move, (_, q))| q.map(|q_val| (uci_move.clone(), q_val)))
+            .filter_map(|(uci_move, (_, q))| q.map(|q_value| (uci_move.clone(), q_value)))
             .collect::<PolicyMap>();
 
         Ok(EngineEval {
@@ -245,12 +245,12 @@ pub fn format_position_cmd(move_sequence: &str) -> String {
 /// Parse WDL from an info line.
 fn parse_wdl(line: &str) -> Option<(u32, u32, u32)> {
     let tokens = line.split_whitespace().collect::<Vec<&str>>();
-    let idx = tokens.iter().position(|&t| t == "wdl")?;
-    if idx + 3 < tokens.len() {
-        let w: u32 = tokens[idx + 1].parse().ok()?;
-        let d: u32 = tokens[idx + 2].parse().ok()?;
-        let l: u32 = tokens[idx + 3].parse().ok()?;
-        Some((w, d, l))
+    let wdl_index = tokens.iter().position(|&token| token == "wdl")?;
+    if wdl_index + 3 < tokens.len() {
+        let wins: u32 = tokens[wdl_index + 1].parse().ok()?;
+        let draws: u32 = tokens[wdl_index + 2].parse().ok()?;
+        let losses: u32 = tokens[wdl_index + 3].parse().ok()?;
+        Some((wins, draws, losses))
     } else {
         None
     }
@@ -308,7 +308,7 @@ where
     T: Copy,
 {
     match map.get(uci_move) {
-        Some(v) => Some(*v),
+        Some(value) => Some(*value),
         None => match castle_to_king_rook(uci_move) {
             Some(alt) => map.get(alt).copied(),
             None => None,

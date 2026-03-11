@@ -26,18 +26,18 @@ pub fn view<'a>(
         let is_selected = selected_move == Some(&info.uci_move);
 
         let policy_str = match info.engine_policy {
-            Some(p) => format!("{:.1}%", p),
+            Some(policy_value) => format!("{:.1}%", policy_value),
             None => "-".to_string(),
         };
 
         let delta_str = match info.delta {
-            Some(d) => format!("{:+.3}", d),
+            Some(delta_value) => format!("{:+.3}", delta_value),
             None => "-".to_string(),
         };
 
         let delta_color = match info.delta {
-            Some(d) if d > 0.01 => colors::GREEN,
-            Some(d) if d < -0.01 => colors::RED,
+            Some(delta_value) if delta_value > 0.01 => colors::GREEN,
+            Some(delta_value) if delta_value < -0.01 => colors::RED,
             Some(_) => colors::TEXT_DIM,
             None => colors::TEXT,
         };
@@ -113,14 +113,14 @@ fn move_detail(info: &RootMoveInfo) -> Option<Element<'_, Message>> {
     );
 
     match info.wdl {
-        Some((w, d, l)) => {
-            let total = (w + d + l) as f64;
+        Some((wins, draws, losses)) => {
+            let total = (wins + draws + losses) as f64;
             if total > 0.0 {
                 let wdl_str = format!(
                     "WDL: {:.1}% / {:.1}% / {:.1}%",
-                    w as f64 / total * 100.0,
-                    d as f64 / total * 100.0,
-                    l as f64 / total * 100.0,
+                    wins as f64 / total * 100.0,
+                    draws as f64 / total * 100.0,
+                    losses as f64 / total * 100.0,
                 );
                 details.push(text(wdl_str).size(12).into());
             }

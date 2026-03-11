@@ -17,12 +17,12 @@ pub fn candidate_moves_max(
     let mut candidates: Vec<(String, f64)> = engine_top
         .iter()
         .chain(maia_top.iter())
-        .filter(|uci| seen.insert(uci.to_string()))
-        .map(|uci| {
-            let engine_p = lookup_castling_aware(uci, engine_policy).unwrap_or(0.0) as f64 / 100.0;
-            let maia_p = lookup_castling_aware(uci, maia_policy).unwrap_or(0.0) as f64 / 100.0;
-            let blended = config.alpha * engine_p + (1.0 - config.alpha) * maia_p;
-            ((*uci).clone(), blended)
+        .filter(|uci_move| seen.insert(uci_move.to_string()))
+        .map(|uci_move| {
+            let engine_policy_value = lookup_castling_aware(uci_move, engine_policy).unwrap_or(0.0) as f64 / 100.0;
+            let maia_policy_value = lookup_castling_aware(uci_move, maia_policy).unwrap_or(0.0) as f64 / 100.0;
+            let blended = config.alpha * engine_policy_value + (1.0 - config.alpha) * maia_policy_value;
+            ((*uci_move).clone(), blended)
         })
         .collect();
 
@@ -38,8 +38,8 @@ pub fn candidate_moves_chance(
 ) -> Vec<(String, f64)> {
     let mut candidates: Vec<(String, f64)> = maia_policy
         .iter()
-        .filter(|(_, p)| (**p as f64 / 100.0) >= config.maia_min_prob)
-        .map(|(m, p)| (m.clone(), *p as f64 / 100.0))
+        .filter(|(_, maia_probability)| (**maia_probability as f64 / 100.0) >= config.maia_min_prob)
+        .map(|(uci_move, maia_probability)| (uci_move.clone(), *maia_probability as f64 / 100.0))
         .collect();
 
     normalize_priors(&mut candidates);
@@ -48,17 +48,17 @@ pub fn candidate_moves_chance(
 
 fn top_n_by_policy(policy: &HashMap<String, f32>, n: usize) -> Vec<&String> {
     let mut sorted: Vec<_> = policy.iter().collect();
-    sorted.sort_by(|a, b| match b.1.partial_cmp(a.1) {
+    sorted.sort_by(|first, second| match second.1.partial_cmp(first.1) {
         Some(ord) => ord,
         None => std::cmp::Ordering::Equal,
     });
-    sorted.iter().take(n).map(|(m, _)| *m).collect()
+    sorted.iter().take(n).map(|(uci_move, _)| *uci_move).collect()
 }
 
 fn normalize_priors(candidates: &mut Vec<(String, f64)>) {
-    let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
+    let sum: f64 = candidates.iter().map(|(_, prior)| prior).sum();
     if sum > 0.0 {
-        candidates.iter_mut().for_each(|(_, p)| *p /= sum);
+        candidates.iter_mut().for_each(|(_, prior)| *prior /= sum);
     }
 }
 

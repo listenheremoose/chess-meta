@@ -25,8 +25,8 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
     let root = tree.root();
     let is_white = super::is_white_to_move_from_node(root);
 
-    let engine_position_value = root.wdl.map(|(w, d, _l)| {
-        w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0
+    let engine_position_value = root.wdl.map(|(wins, draws, _)| {
+        wins as f64 / 1000.0 + config.contempt * draws as f64 / 1000.0
     });
 
     let mut move_infos: Vec<RootMoveInfo> = root
@@ -35,7 +35,7 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
         .filter_map(|&child_id| build_root_move_info(tree, child_id, is_white, engine_position_value, config))
         .collect();
 
-    move_infos.sort_by(|a, b| match b.practical_q.partial_cmp(&a.practical_q) {
+    move_infos.sort_by(|first, second| match second.practical_q.partial_cmp(&first.practical_q) {
         Some(ord) => ord,
         None => std::cmp::Ordering::Equal,
     });
@@ -52,13 +52,13 @@ fn build_root_move_info(
 ) -> Option<RootMoveInfo> {
     let root = tree.root();
     let child = tree.get(child_id)?;
-    let uci = child.move_uci.as_ref()?.clone();
+    let uci_move = child.move_uci.as_ref()?.clone();
     let visits = child.visit_count;
     let q_white = child.q_value();
     let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-    let engine_pol = root.engine_policy.as_ref().and_then(|pol| {
-        lookup_castling_aware(&uci, pol).map(|p| p as f64)
+    let engine_pol = root.engine_policy.as_ref().and_then(|engine_policy| {
+        lookup_castling_aware(&uci_move, engine_policy).map(|policy_value| policy_value as f64)
     });
 
     let worst_case = if visits > 0 {
@@ -68,10 +68,10 @@ fn build_root_move_info(
     };
     let practical_q = (1.0 - config.safety) * q_stm + config.safety * worst_case;
 
-    let delta = engine_position_value.map(|ev| practical_q - ev);
+    let delta = engine_position_value.map(|engine_value| practical_q - engine_value);
 
     Some(RootMoveInfo {
-        uci_move: uci,
+        uci_move: uci_move,
         node_id: child_id,
         visits,
         engine_policy: engine_pol,
@@ -88,7 +88,7 @@ fn build_root_move_info(
 #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
 pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo> {
     let mut infos = root_move_infos(tree, config);
-    infos.retain(|i| i.visits > 0);
+    infos.retain(|move_info| move_info.visits > 0);
     infos.into_iter().next()
 }
 
@@ -96,8 +96,8 @@ pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo
 fn worst_case_value(tree: &SearchTree, node_id: NodeId, is_white: bool) -> f64 {
     let node = &tree.nodes[node_id.index()];
     if node.children.is_empty() {
-        let q = node.q_value();
-        return if is_white { q } else { 1.0 - q };
+        let q_value = node.q_value();
+        return if is_white { q_value } else { 1.0 - q_value };
     }
 
     let qualifying = node.children
@@ -112,14 +112,14 @@ fn worst_case_value(tree: &SearchTree, node_id: NodeId, is_white: bool) -> f64 {
             }
         });
 
-    match qualifying.fold(None, |acc: Option<f64>, q| Some(match acc {
-        Some(prev) => prev.min(q),
-        None => q,
+    match qualifying.fold(None, |minimum_so_far: Option<f64>, candidate_value| Some(match minimum_so_far {
+        Some(previous_minimum) => previous_minimum.min(candidate_value),
+        None => candidate_value,
     })) {
         Some(worst) => worst,
         None => {
-            let q = node.q_value();
-            if is_white { q } else { 1.0 - q }
+            let q_value = node.q_value();
+            if is_white { q_value } else { 1.0 - q_value }
         }
     }
 }

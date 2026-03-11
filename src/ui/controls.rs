@@ -28,7 +28,7 @@ pub fn view<'a>(
     let stats = match snapshot {
         Some(snap) => {
             let best = match snap.best_move.as_deref() {
-                Some(m) => m,
+                Some(best_move) => best_move,
                 None => "-",
             };
             let iter_text = format!(

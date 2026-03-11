@@ -118,20 +118,20 @@ impl Cache {
         };
 
         match stmt.query_row(params![epd], |row| {
-            let w: u32 = row.get(0)?;
-            let d: u32 = row.get(1)?;
-            let l: u32 = row.get(2)?;
+            let wins: u32 = row.get(0)?;
+            let draws: u32 = row.get(1)?;
+            let losses: u32 = row.get(2)?;
             let policy_json: String = row.get(3)?;
             let q_json: String = row.get(4)?;
             let policy: HashMap<String, f32> = match serde_json::from_str(&policy_json) {
-                Ok(p) => p,
+                Ok(policy) => policy,
                 Err(_) => HashMap::new(),
             };
             let q_values: HashMap<String, f32> = match serde_json::from_str(&q_json) {
-                Ok(q) => q,
+                Ok(q_values) => q_values,
                 Err(_) => HashMap::new(),
             };
-            Ok((w, d, l, policy, q_values))
+            Ok((wins, draws, losses, policy, q_values))
         }) {
             Ok(result) => Some(result),
             Err(_) => None,
@@ -247,7 +247,7 @@ impl Cache {
 
             stmt.execute(params![
                 node.id.0 as i64,
-                node.parent.map(|p| p.0 as i64),
+                node.parent.map(|parent_id| parent_id.0 as i64),
                 node.move_uci.as_deref(),
                 node_type_str,
                 node.epd,
@@ -294,7 +294,7 @@ impl Cache {
                 let terminal_value: Option<f64> = row.get(11)?;
                 Ok((
                     id as u32,
-                    parent_id.map(|p| p as u32),
+                    parent_id.map(|raw_id| raw_id as u32),
                     move_uci,
                     node_type_str,
                     epd,

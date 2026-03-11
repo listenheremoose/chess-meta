@@ -67,8 +67,8 @@ fn select_puct(tree: &SearchTree, node_id: NodeId, config: &Config) -> NodeId {
             log::trace!("puct child={:?} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child_id, child.prior);
             (child_id, score)
         })
-        .reduce(|(id_a, score_a), (id_b, score_b)| {
-            if score_b > score_a { (id_b, score_b) } else { (id_a, score_a) }
+        .reduce(|(left_id, left_score), (right_id, right_score)| {
+            if right_score > left_score { (right_id, right_score) } else { (left_id, left_score) }
         });
 
     let best_child = match best_scored {
@@ -95,23 +95,23 @@ fn select_chance(tree: &SearchTree, node_id: NodeId, config: &Config, state: &mu
 
     state.chance_probs.clear();
     state.chance_probs.extend(
-        children.iter().map(|&cid| tree.nodes[cid.index()].prior),
+        children.iter().map(|&child_id| tree.nodes[child_id.index()].prior),
     );
 
     if (config.maia_temperature - 1.0).abs() > 1e-6 {
         let inv_t = 1.0 / config.maia_temperature;
-        state.chance_probs.iter_mut().for_each(|p| *p = p.powf(inv_t));
+        state.chance_probs.iter_mut().for_each(|probability| *probability = probability.powf(inv_t));
     }
 
-    state.chance_probs.iter_mut().for_each(|p| *p = p.max(config.maia_floor));
+    state.chance_probs.iter_mut().for_each(|probability| *probability = probability.max(config.maia_floor));
 
     let sum: f64 = state.chance_probs.iter().sum();
     if sum <= 0.0 {
         return children[0];
     }
-    state.chance_probs.iter_mut().for_each(|p| *p /= sum);
+    state.chance_probs.iter_mut().for_each(|probability| *probability /= sum);
 
-    let r: f64 = rand::random();
+    let random_value: f64 = rand::random();
     let found = state.chance_probs
         .iter()
         .scan(0.0, |cumulative, &prob| {
@@ -119,10 +119,10 @@ fn select_chance(tree: &SearchTree, node_id: NodeId, config: &Config, state: &mu
             Some(*cumulative)
         })
         .enumerate()
-        .find(|(_, cumulative)| r < *cumulative);
+        .find(|(_, cumulative_probability)| random_value < *cumulative_probability);
 
     match found {
-        Some((i, _)) => children[i],
+        Some((index, _)) => children[index],
         // Fallback: floating-point rounding caused r >= cumulative sum; select last child.
         // children is guaranteed non-empty — select_chance is only called on expanded nodes.
         None => *children.last().unwrap(),

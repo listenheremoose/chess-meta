@@ -89,7 +89,7 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
             let visible: Vec<_> = snapshot
                 .nodes
                 .iter()
-                .filter(|n| n.visit_count >= self.min_visits && n.depth <= self.max_depth)
+                .filter(|node| node.visit_count >= self.min_visits && node.depth <= self.max_depth)
                 .collect();
 
             if visible.is_empty() {
@@ -98,8 +98,8 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
             // Layout: simple layered tree
             // Group by depth
-            let max_depth = match visible.iter().map(|n| n.depth).max() {
-                Some(d) => d,
+            let max_depth = match visible.iter().map(|node| node.depth).max() {
+                Some(depth) => depth,
                 None => 0,
             };
             let level_height = bounds.height / (max_depth as f32 + 2.0);
@@ -109,26 +109,26 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
             let mut positions: HashMap<NodeId, Point> = HashMap::new();
 
             // Count nodes per level first
-            visible.iter().for_each(|n| {
-                *level_counts.entry(n.depth).or_insert(0) += 1;
+            visible.iter().for_each(|node| {
+                *level_counts.entry(node.depth).or_insert(0) += 1;
             });
 
             let mut level_indices: HashMap<u32, usize> = HashMap::new();
 
-            visible.iter().for_each(|n| {
-                let count = level_counts[&n.depth];
-                let idx = level_indices.entry(n.depth).or_insert(0);
-                let x = bounds.width * (*idx as f32 + 1.0) / (count as f32 + 1.0);
-                let y = level_height * (n.depth as f32 + 1.0);
-                positions.insert(n.id, Point::new(x, y));
-                *idx += 1;
+            visible.iter().for_each(|node| {
+                let count = level_counts[&node.depth];
+                let index = level_indices.entry(node.depth).or_insert(0);
+                let x = bounds.width * (*index as f32 + 1.0) / (count as f32 + 1.0);
+                let y = level_height * (node.depth as f32 + 1.0);
+                positions.insert(node.id, Point::new(x, y));
+                *index += 1;
             });
 
             // Draw edges
             visible.iter()
-                .filter_map(|n| n.parent_id.map(|pid| (n, pid)))
-                .for_each(|(n, parent_id)| {
-                    match (positions.get(&n.id), positions.get(&parent_id)) {
+                .filter_map(|node| node.parent_id.map(|parent_id| (node, parent_id)))
+                .for_each(|(node, parent_id)| {
+                    match (positions.get(&node.id), positions.get(&parent_id)) {
                         (Some(&child_pos), Some(&parent_pos)) => {
                             let edge = Path::line(parent_pos, child_pos);
                             frame.stroke(
@@ -146,34 +146,34 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
                 });
 
             // Draw nodes
-            let max_visits = match visible.iter().map(|n| n.visit_count).max() {
-                Some(v) => v,
+            let max_visits = match visible.iter().map(|node| node.visit_count).max() {
+                Some(max_visit_count) => max_visit_count,
                 None => 1,
             } as f32;
 
             visible.iter()
-                .filter_map(|n| positions.get(&n.id).map(|&pos| (n, pos)))
-                .for_each(|(n, pos)| {
-                    let size = 4.0 + 16.0 * (n.visit_count as f32 / max_visits).sqrt();
+                .filter_map(|node| positions.get(&node.id).map(|&pos| (node, pos)))
+                .for_each(|(node, pos)| {
+                    let size = 4.0 + 16.0 * (node.visit_count as f32 / max_visits).sqrt();
 
                     // Color by Q value: green (good for us) to red (bad)
-                    let q = n.q_value as f32;
-                    let node_color = match n.node_type {
-                        NodeType::Max => lerp_color(colors::RED, colors::GREEN, q),
-                        NodeType::Chance => lerp_color(colors::RED, colors::ORANGE, q),
+                    let q_value = node.q_value as f32;
+                    let node_color = match node.node_type {
+                        NodeType::Max => lerp_color(colors::RED, colors::GREEN, q_value),
+                        NodeType::Chance => lerp_color(colors::RED, colors::ORANGE, q_value),
                     };
 
-                    match n.node_type {
+                    match node.node_type {
                         NodeType::Max => draw_max_node(frame, pos, size, node_color),
                         NodeType::Chance => draw_chance_node(frame, pos, size, node_color),
                     }
 
                     // Label for nodes with enough visits
-                    if n.visit_count as f32 > max_visits * 0.05 {
-                        match &n.move_uci {
-                            Some(uci) => {
+                    if node.visit_count as f32 > max_visits * 0.05 {
+                        match &node.move_uci {
+                            Some(uci_move) => {
                                 let label = Text {
-                                    content: uci.clone(),
+                                    content: uci_move.clone(),
                                     position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
                                     color: colors::TEXT,
                                     size: iced::Pixels(10.0),
@@ -204,12 +204,12 @@ fn draw_chance_node(frame: &mut canvas::Frame, pos: Point, size: f32, color: Col
     frame.fill(&circle, color);
 }
 
-fn lerp_color(a: Color, b: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
+fn lerp_color(from_color: Color, to_color: Color, lerp_factor: f32) -> Color {
+    let lerp_factor = lerp_factor.clamp(0.0, 1.0);
     Color::from_rgba(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
+        from_color.r + (to_color.r - from_color.r) * lerp_factor,
+        from_color.g + (to_color.g - from_color.g) * lerp_factor,
+        from_color.b + (to_color.b - from_color.b) * lerp_factor,
         0.9,
     )
 }
