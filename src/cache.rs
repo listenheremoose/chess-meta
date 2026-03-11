@@ -11,16 +11,15 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn open() -> Result<Self, String> {
-        let path = Self::db_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create cache dir: {e}"))?;
-        }
+    /// Open an in-memory SQLite database (for testing).
+    pub fn open_in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to open in-memory DB: {e}"))?;
+        Self::init_tables(&conn)?;
+        Ok(Self { conn })
+    }
 
-        let conn =
-            Connection::open(&path).map_err(|e| format!("Failed to open cache DB: {e}"))?;
-
+    fn init_tables(conn: &Connection) -> Result<(), String> {
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS engine_cache (
@@ -54,6 +53,20 @@ impl Cache {
             ",
         )
         .map_err(|e| format!("Failed to create cache tables: {e}"))?;
+        Ok(())
+    }
+
+    pub fn open() -> Result<Self, String> {
+        let path = Self::db_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create cache dir: {e}"))?;
+        }
+
+        let conn =
+            Connection::open(&path).map_err(|e| format!("Failed to open cache DB: {e}"))?;
+
+        Self::init_tables(&conn)?;
 
         Ok(Self { conn })
     }
@@ -191,5 +204,128 @@ impl Cache {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("chess-meta")
             .join("cache.db")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Open an in-memory SQLite database for testing.
+    fn test_cache() -> Cache {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS engine_cache (
+                epd TEXT NOT NULL,
+                wdl_w INTEGER NOT NULL,
+                wdl_d INTEGER NOT NULL,
+                wdl_l INTEGER NOT NULL,
+                policy_json TEXT NOT NULL,
+                q_values_json TEXT NOT NULL,
+                PRIMARY KEY (epd)
+            );
+            CREATE TABLE IF NOT EXISTS maia_cache (
+                move_sequence TEXT NOT NULL,
+                policy_json TEXT NOT NULL,
+                PRIMARY KEY (move_sequence)
+            );
+            CREATE TABLE IF NOT EXISTS tree_nodes (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER,
+                move_uci TEXT,
+                node_type TEXT NOT NULL,
+                epd TEXT NOT NULL,
+                move_sequence TEXT NOT NULL,
+                visit_count INTEGER NOT NULL DEFAULT 0,
+                total_value REAL NOT NULL DEFAULT 0.0,
+                prior REAL NOT NULL DEFAULT 0.0,
+                children_json TEXT,
+                session_id TEXT NOT NULL
+            );
+            ",
+        )
+        .unwrap();
+        Cache { conn }
+    }
+
+    // -- Engine Cache --
+
+    #[test]
+    fn engine_cache_miss_returns_none() {
+        let cache = test_cache();
+        assert!(cache.get_engine_eval("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -").is_none());
+    }
+
+    #[test]
+    fn engine_cache_roundtrips_eval() {
+        let cache = test_cache();
+        let epd = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -";
+        let mut policy = HashMap::new();
+        policy.insert("e7e5".to_string(), 35.0f32);
+        policy.insert("c7c5".to_string(), 20.0);
+        let mut q_values = HashMap::new();
+        q_values.insert("e7e5".to_string(), -0.05f32);
+
+        cache.put_engine_eval(epd, (400, 450, 150), &policy, &q_values).unwrap();
+
+        let (w, d, l, cached_policy, cached_q) = cache.get_engine_eval(epd).unwrap();
+        assert_eq!((w, d, l), (400, 450, 150));
+        assert!((cached_policy["e7e5"] - 35.0).abs() < 0.01);
+        assert!((cached_q["e7e5"] - (-0.05)).abs() < 0.001);
+    }
+
+    #[test]
+    fn engine_cache_overwrites_on_duplicate_epd() {
+        let cache = test_cache();
+        let epd = "test_epd";
+        let policy = HashMap::new();
+        let q = HashMap::new();
+
+        cache.put_engine_eval(epd, (100, 800, 100), &policy, &q).unwrap();
+        cache.put_engine_eval(epd, (300, 400, 300), &policy, &q).unwrap();
+
+        let (w, d, l, _, _) = cache.get_engine_eval(epd).unwrap();
+        assert_eq!((w, d, l), (300, 400, 300));
+    }
+
+    // -- Maia Cache --
+
+    #[test]
+    fn maia_cache_miss_returns_none() {
+        let cache = test_cache();
+        assert!(cache.get_maia_policy("e2e4 e7e5").is_none());
+    }
+
+    #[test]
+    fn maia_cache_roundtrips_policy() {
+        let cache = test_cache();
+        let move_seq = "e2e4 e7e5 g1f3";
+        let mut policy = HashMap::new();
+        policy.insert("b8c6".to_string(), 45.0f32);
+        policy.insert("d7d6".to_string(), 25.0);
+
+        cache.put_maia_policy(move_seq, &policy).unwrap();
+
+        let cached = cache.get_maia_policy(move_seq).unwrap();
+        assert!((cached["b8c6"] - 45.0).abs() < 0.01);
+        assert!((cached["d7d6"] - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn maia_cache_different_move_orders_are_separate() {
+        let cache = test_cache();
+        let mut policy_a = HashMap::new();
+        policy_a.insert("move_a".to_string(), 50.0f32);
+        let mut policy_b = HashMap::new();
+        policy_b.insert("move_b".to_string(), 60.0f32);
+
+        cache.put_maia_policy("e2e4 d7d5", &policy_a).unwrap();
+        cache.put_maia_policy("d2d4 e7e5", &policy_b).unwrap();
+
+        let cached_a = cache.get_maia_policy("e2e4 d7d5").unwrap();
+        let cached_b = cache.get_maia_policy("d2d4 e7e5").unwrap();
+        assert!(cached_a.contains_key("move_a"));
+        assert!(cached_b.contains_key("move_b"));
     }
 }

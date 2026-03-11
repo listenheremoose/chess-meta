@@ -132,22 +132,47 @@ fn uci_move_str(m: &Move) -> String {
 mod tests {
     use super::*;
 
+    // -- Startpos --
+
     #[test]
-    fn startpos_epd() {
+    fn startpos_produces_initial_epd() {
         let pos = PositionState::startpos();
         assert!(pos.epd.contains("rnbqkbnr"));
         assert!(pos.move_sequence.is_empty());
     }
 
+    // -- from_moves --
+
     #[test]
-    fn from_moves_basic() {
+    fn from_moves_empty_returns_startpos() {
+        let pos = PositionState::from_moves("").unwrap();
+        assert!(pos.move_sequence.is_empty());
+        assert_eq!(pos.turn(), Color::White);
+    }
+
+    #[test]
+    fn from_moves_tracks_sequence_and_turn() {
         let pos = PositionState::from_moves("e2e4 e7e5").unwrap();
         assert_eq!(pos.move_sequence, "e2e4 e7e5");
         assert_eq!(pos.turn(), Color::White);
     }
 
     #[test]
-    fn apply_uci() {
+    fn from_moves_invalid_uci_returns_error() {
+        let result = PositionState::from_moves("zzzz");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_moves_illegal_move_returns_error() {
+        let result = PositionState::from_moves("e2e5"); // Pawn can't jump to e5
+        assert!(result.is_err());
+    }
+
+    // -- apply_uci --
+
+    #[test]
+    fn apply_uci_updates_sequence_and_turn() {
         let pos = PositionState::startpos();
         let pos2 = pos.apply_uci("e2e4").unwrap();
         assert_eq!(pos2.move_sequence, "e2e4");
@@ -155,10 +180,45 @@ mod tests {
     }
 
     #[test]
-    fn terminal_checkmate() {
-        // Scholar's mate
+    fn apply_uci_preserves_original_position() {
+        let pos = PositionState::startpos();
+        let _pos2 = pos.apply_uci("e2e4").unwrap();
+        assert_eq!(pos.turn(), Color::White); // Original unchanged
+        assert!(pos.move_sequence.is_empty());
+    }
+
+    #[test]
+    fn apply_uci_illegal_move_returns_error() {
+        let pos = PositionState::startpos();
+        let result = pos.apply_uci("e1e2"); // King can't move there
+        assert!(result.is_err());
+    }
+
+    // -- Terminal detection --
+
+    #[test]
+    fn terminal_checkmate_returns_winner_value() {
+        // Scholar's mate — White wins
         let pos = PositionState::from_moves("e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7").unwrap();
         assert!(pos.is_game_over());
         assert_eq!(pos.terminal_value(), Some(1.0)); // White wins
+    }
+
+    #[test]
+    fn terminal_non_game_over_returns_none() {
+        let pos = PositionState::from_moves("e2e4").unwrap();
+        assert!(!pos.is_game_over());
+        assert_eq!(pos.terminal_value(), None);
+    }
+
+    // -- EPD transposition safety --
+
+    #[test]
+    fn same_position_different_move_order_same_epd() {
+        // 1. Nf3 Nf6 2. Nc3 vs 1. Nc3 Nf6 2. Nf3
+        let pos_a = PositionState::from_moves("g1f3 g8f6 b1c3").unwrap();
+        let pos_b = PositionState::from_moves("b1c3 g8f6 g1f3").unwrap();
+        assert_eq!(pos_a.epd, pos_b.epd);
+        assert_ne!(pos_a.move_sequence, pos_b.move_sequence);
     }
 }

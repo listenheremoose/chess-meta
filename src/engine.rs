@@ -248,8 +248,10 @@ pub fn lookup_castling_aware<T: Copy>(
 mod tests {
     use super::*;
 
+    // -- UCI Output Parsing --
+
     #[test]
-    fn test_parse_verbose_move_stats() {
+    fn verbose_stats_extracts_move_policy_and_q() {
         let line = "info string d2d4  (293 ) N:    7934 (+18) (P: 12.71%) (WL:  0.05704) (D: 0.745) (M: 197.1) (Q:  0.05704) (U: 0.00749) (S:  0.06484) (V:  0.0303)";
         let (uci_move, policy_pct, q_value) = parse_verbose_move_stats(line).unwrap();
         assert_eq!(uci_move, "d2d4");
@@ -258,34 +260,85 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_verbose_node_line() {
+    fn verbose_stats_skips_node_summary_line() {
         let line = "info string node (0 ) N: 100000 (+ 0) (P: 100.00%) (WL: 0.05) (D: 0.7) (M: 200.0) (Q: 0.05) (V: 0.05)";
         assert!(parse_verbose_move_stats(line).is_none());
     }
 
     #[test]
-    fn test_parse_wdl() {
+    fn verbose_stats_handles_missing_q_value() {
+        // Some lc0 versions may not include Q for unvisited moves
+        let line = "info string e2e4  (0  ) N:       0 (+ 0) (P: 45.20%)";
+        let result = parse_verbose_move_stats(line);
+        assert!(result.is_some());
+        let (uci_move, policy_pct, q_value) = result.unwrap();
+        assert_eq!(uci_move, "e2e4");
+        assert!((policy_pct - 45.20).abs() < 0.01);
+        assert!(q_value.is_none());
+    }
+
+    #[test]
+    fn wdl_parses_from_info_line() {
         let line = "info depth 1 score cp 30 wdl 400 500 100 pv e2e4";
         assert_eq!(parse_wdl(line), Some((400, 500, 100)));
     }
 
     #[test]
-    fn test_format_position_cmd() {
+    fn wdl_returns_none_when_missing() {
+        let line = "info depth 1 score cp 30 pv e2e4";
+        assert_eq!(parse_wdl(line), None);
+    }
+
+    // -- Position Command --
+
+    #[test]
+    fn format_position_empty_returns_startpos() {
         assert_eq!(format_position_cmd(""), "position startpos");
+    }
+
+    #[test]
+    fn format_position_with_moves_appends_them() {
         assert_eq!(
             format_position_cmd("e2e4 e7e5"),
             "position startpos moves e2e4 e7e5"
         );
     }
 
+    // -- Castling Notation --
+
     #[test]
-    fn test_castle_to_king_rook() {
-        assert_eq!(castle_to_king_rook("e1g1"), Some("e1h1"));
+    fn castle_maps_king_destination_to_king_rook() {
+        assert_eq!(castle_to_king_rook("e1g1"), Some("e1h1")); // White kingside
+        assert_eq!(castle_to_king_rook("e1c1"), Some("e1a1")); // White queenside
+        assert_eq!(castle_to_king_rook("e8g8"), Some("e8h8")); // Black kingside
+        assert_eq!(castle_to_king_rook("e8c8"), Some("e8a8")); // Black queenside
+    }
+
+    #[test]
+    fn castle_returns_none_for_non_castling_move() {
         assert_eq!(castle_to_king_rook("e2e4"), None);
     }
 
     #[test]
-    fn test_engine_eval_value() {
+    fn lookup_castling_aware_finds_king_rook_alias() {
+        let mut map = HashMap::new();
+        map.insert("e1h1".to_string(), 0.5f32); // King-rook notation
+        // Lookup by king-destination notation should find it
+        assert_eq!(lookup_castling_aware("e1g1", &map), Some(0.5));
+    }
+
+    #[test]
+    fn lookup_castling_aware_prefers_direct_match() {
+        let mut map = HashMap::new();
+        map.insert("e1g1".to_string(), 0.7f32); // Direct
+        map.insert("e1h1".to_string(), 0.5f32); // King-rook
+        assert_eq!(lookup_castling_aware("e1g1", &map), Some(0.7));
+    }
+
+    // -- Value Computation --
+
+    #[test]
+    fn value_white_applies_contempt_to_draws() {
         let eval = EngineEval {
             wdl: (300, 500, 200),
             policy: HashMap::new(),
@@ -293,5 +346,27 @@ mod tests {
         };
         let v = eval.value_white(0.6);
         assert!((v - 0.6).abs() < 0.001); // 300/1000 + 0.6 * 500/1000 = 0.3 + 0.3 = 0.6
+    }
+
+    #[test]
+    fn value_white_zero_contempt_ignores_draws() {
+        let eval = EngineEval {
+            wdl: (300, 500, 200),
+            policy: HashMap::new(),
+            q_values: HashMap::new(),
+        };
+        let v = eval.value_white(0.0);
+        assert!((v - 0.3).abs() < 0.001); // 300/1000 + 0 = 0.3
+    }
+
+    #[test]
+    fn value_white_full_contempt_treats_draws_as_wins() {
+        let eval = EngineEval {
+            wdl: (0, 1000, 0),
+            policy: HashMap::new(),
+            q_values: HashMap::new(),
+        };
+        let v = eval.value_white(1.0);
+        assert!((v - 1.0).abs() < 0.001); // 0 + 1.0 * 1000/1000 = 1.0
     }
 }
