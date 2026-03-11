@@ -2,15 +2,20 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
+const LINE_BUFFER_CAPACITY: usize = 512;
+
+type PolicyMap = HashMap<String, f32>;
+type VerboseStatsMap = HashMap<String, (f32, Option<f32>)>;
+
 /// Result of a nodes=1 engine evaluation.
 #[derive(Debug, Clone)]
 pub struct EngineEval {
     /// Win/Draw/Loss from White's perspective (each in 0..1000).
     pub wdl: (u32, u32, u32),
     /// Policy map: UCI move -> policy percentage (0-100).
-    pub policy: HashMap<String, f32>,
+    pub policy: PolicyMap,
     /// Q values from verbose stats: UCI move -> Q.
-    pub q_values: HashMap<String, f32>,
+    pub q_values: PolicyMap,
 }
 
 impl EngineEval {
@@ -32,7 +37,7 @@ impl EngineEval {
     /// Get the top N moves by policy.
     #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn top_policy_moves(&self, n: usize) -> Vec<(String, f32)> {
-        let mut moves: Vec<_> = self.policy.iter().map(|(m, p)| (m.clone(), *p)).collect();
+        let mut moves = self.policy.iter().map(|(m, p)| (m.clone(), *p)).collect::<Vec<_>>();
         moves.sort_by(|a, b| match b.1.partial_cmp(&a.1) {
             Some(ord) => ord,
             None => std::cmp::Ordering::Equal,
@@ -81,7 +86,7 @@ impl Engine {
             child,
             stdin,
             reader,
-            line_buffer: String::with_capacity(512),
+            line_buffer: String::with_capacity(LINE_BUFFER_CAPACITY),
             query_count: 0,
             ucinewgame_interval,
         };
@@ -122,7 +127,7 @@ impl Engine {
         self.send(&format!("go nodes {nodes}"))?;
 
         let mut wdl = (0u32, 0u32, 0u32);
-        let mut verbose_stats: HashMap<String, (f32, Option<f32>)> = HashMap::new();
+        let mut verbose_stats: VerboseStatsMap = HashMap::new();
 
         loop {
             self.read_line_into_buffer()?;
@@ -145,14 +150,14 @@ impl Engine {
             }
         }
 
-        let policy: HashMap<String, f32> = verbose_stats
+        let policy = verbose_stats
             .iter()
             .map(|(uci_move, (p, _))| (uci_move.clone(), *p))
-            .collect();
-        let q_values: HashMap<String, f32> = verbose_stats
+            .collect::<PolicyMap>();
+        let q_values = verbose_stats
             .iter()
             .filter_map(|(uci_move, (_, q))| q.map(|q_val| (uci_move.clone(), q_val)))
-            .collect();
+            .collect::<PolicyMap>();
 
         Ok(EngineEval {
             wdl,
@@ -214,7 +219,7 @@ pub fn format_position_cmd(move_sequence: &str) -> String {
 
 /// Parse WDL from an info line.
 fn parse_wdl(line: &str) -> Option<(u32, u32, u32)> {
-    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let tokens = line.split_whitespace().collect::<Vec<&str>>();
     let idx = tokens.iter().position(|&t| t == "wdl")?;
     if idx + 3 < tokens.len() {
         let w: u32 = tokens[idx + 1].parse().ok()?;
