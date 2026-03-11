@@ -17,7 +17,8 @@ use chess_meta::engine::Engine;
 use chess_meta::maia::MaiaEngine;
 use chess_meta::position::PositionState;
 use chess_meta::search::{
-    NodeType, SearchTree, backpropagate, candidate_moves_chance, candidate_moves_max, select,
+    NodeId, NodeType, SearchState, SearchTree, backpropagate, candidate_moves_chance,
+    candidate_moves_max, select,
 };
 
 /// Read lc0/weights paths from env vars, falling back to rust-chess settings.toml.
@@ -189,7 +190,7 @@ fn search_tree_with_real_engines() {
     for (uci_move, prior) in &candidates {
         let child_pos = start.apply_uci(uci_move).unwrap();
         tree.add_child(
-            0,
+            NodeId(0),
             uci_move.clone(),
             NodeType::Chance,
             child_pos.epd.clone(),
@@ -225,10 +226,11 @@ fn search_tree_with_real_engines() {
     // ── Part 2: Mini MCTS loop (5 iterations) ───────────────────────
 
     let iterations: u64 = 5;
+    let mut search_state = SearchState::new();
 
     for _iter in 0..iterations {
         // 1. Select
-        let leaf_id = select(&tree, &config);
+        let leaf_id = select(&tree, &config, &mut search_state);
         let leaf = tree.get(leaf_id).unwrap();
 
         if leaf.expanded {
@@ -312,15 +314,16 @@ fn search_tree_with_real_engines() {
         "root should have {iterations} visits"
     );
 
-    for (id, node) in &tree.nodes {
+    for node in &tree.nodes {
         let q = node.q_value();
         assert!(
             (0.0..=1.0).contains(&q),
-            "node {id} q={q} out of range"
+            "node {:?} q={q} out of range",
+            node.id
         );
     }
 
-    for (_id, node) in &tree.nodes {
+    for node in &tree.nodes {
         let expected_child_type = match node.node_type {
             NodeType::Max => NodeType::Chance,
             NodeType::Chance => NodeType::Max,

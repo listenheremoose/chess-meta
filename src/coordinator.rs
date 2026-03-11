@@ -9,8 +9,8 @@ use crate::engine::{Engine, EngineEval};
 use crate::maia::MaiaEngine;
 use crate::position::PositionState;
 use crate::search::{
-    NodeType, RootMoveInfo, SearchTree, backpropagate, candidate_moves_chance,
-    candidate_moves_max, root_move_infos, select,
+    NodeId, NodeType, RootMoveInfo, SearchState, SearchTree, backpropagate,
+    candidate_moves_chance, candidate_moves_max, root_move_infos, select,
 };
 
 /// Snapshot of search state sent to the UI on each update.
@@ -35,8 +35,8 @@ pub struct TreeSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct TreeNodeInfo {
-    pub id: u64,
-    pub parent_id: Option<u64>,
+    pub id: NodeId,
+    pub parent_id: Option<NodeId>,
     pub move_uci: Option<String>,
     pub node_type: NodeType,
     pub visit_count: u64,
@@ -285,6 +285,9 @@ fn run_mcts(
     let mut cache_misses: u64 = 0;
     let update_interval = 50; // Send snapshot every N iterations
 
+    // Pre-allocated search state — reused across all iterations
+    let mut search_state = SearchState::new();
+
     // Send an initial snapshot immediately if we resumed a non-trivial tree
     if tree.node_count() > 1 {
         let moves = root_move_infos(&tree, &config);
@@ -323,7 +326,7 @@ fn run_mcts(
         }
 
         // 1. SELECT — traverse tree to a leaf
-        let leaf_id = select(&tree, &config);
+        let leaf_id = select(&tree, &config, &mut search_state);
 
         // 2. EXPAND & EVALUATE the leaf
         let value = match expand_and_evaluate(
@@ -444,7 +447,7 @@ fn run_mcts(
 /// Expand a leaf node and return its evaluation (from White's perspective).
 fn expand_and_evaluate(
     tree: &mut SearchTree,
-    leaf_id: u64,
+    leaf_id: NodeId,
     config: &Config,
     engine: &mut Engine,
     maia: &mut MaiaEngine,
@@ -585,7 +588,7 @@ fn expand_and_evaluate(
 /// Build a tree snapshot for the UI, filtering by minimum visit count.
 fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSnapshot {
     let mut nodes = Vec::new();
-    let mut stack: Vec<(u64, u32)> = vec![(tree.root_id, 0)];
+    let mut stack: Vec<(NodeId, u32)> = vec![(tree.root_id, 0)];
 
     while let Some((id, depth)) = stack.pop() {
         if let Some(node) = tree.get(id) {

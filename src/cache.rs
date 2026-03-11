@@ -220,7 +220,7 @@ impl Cache {
             )
             .map_err(|e| format!("Failed to prepare save statement: {e}"))?;
 
-        tree.nodes.values().try_for_each(|node| {
+        tree.nodes.iter().try_for_each(|node| {
             let node_type_str = match node.node_type {
                 crate::search::NodeType::Max => "Max",
                 crate::search::NodeType::Chance => "Chance",
@@ -229,8 +229,8 @@ impl Cache {
                 .map_err(|e| format!("JSON error: {e}"))?;
 
             stmt.execute(params![
-                node.id as i64,
-                match node.parent { Some(p) => Some(p as i64), None => None },
+                node.id.0 as i64,
+                node.parent.map(|p| p.0 as i64),
                 node.move_uci.as_deref(),
                 node_type_str,
                 node.epd,
@@ -243,7 +243,7 @@ impl Cache {
                 node.expanded as i32,
                 node.terminal_value,
             ])
-            .map_err(|e| format!("Failed to save node {}: {e}", node.id))?;
+            .map_err(|e| format!("Failed to save node {:?}: {e}", node.id))?;
             Ok::<(), String>(())
         })?;
 
@@ -276,8 +276,8 @@ impl Cache {
                 let expanded: i32 = row.get(10)?;
                 let terminal_value: Option<f64> = row.get(11)?;
                 Ok((
-                    id as u64,
-                    match parent_id { Some(p) => Some(p as u64), None => None },
+                    id as u32,
+                    parent_id.map(|p| p as u32),
                     move_uci,
                     node_type_str,
                     epd,
@@ -305,37 +305,51 @@ impl Cache {
             return None;
         }
 
-        let (nodes, max_id) = rows.into_iter().fold(
-            (std::collections::HashMap::new(), 0u64),
-            |(mut nodes, max_id), (id, parent_id, move_uci, node_type_str, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value)| {
-                let node_type = match node_type_str.as_str() {
-                    "Chance" => crate::search::NodeType::Chance,
-                    _ => crate::search::NodeType::Max,
-                };
-                let children: Vec<u64> = match children_json {
-                    Some(j) => match serde_json::from_str(&j) {
-                        Ok(c) => c,
-                        Err(_) => Vec::new(),
-                    },
-                    None => Vec::new(),
-                };
+        // Build a HashMap first, then convert to Vec arena sorted by ID
+        use crate::search::NodeId;
+        let mut node_map: std::collections::HashMap<u32, crate::search::Node> = std::collections::HashMap::new();
+        let mut max_id: u32 = 0;
 
-                let mut node = crate::search::Node::new(
-                    id, parent_id, move_uci, node_type, epd, move_sequence,
-                );
-                node.visit_count = visit_count;
-                node.total_value = total_value;
-                node.prior = prior;
-                node.children = children;
-                node.expanded = expanded;
-                node.terminal_value = terminal_value;
+        rows.into_iter().for_each(|(id, parent_id, move_uci, node_type_str, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value)| {
+            let node_type = match node_type_str.as_str() {
+                "Chance" => crate::search::NodeType::Chance,
+                _ => crate::search::NodeType::Max,
+            };
+            let children: Vec<NodeId> = match children_json {
+                Some(j) => match serde_json::from_str(&j) {
+                    Ok(c) => c,
+                    Err(_) => Vec::new(),
+                },
+                None => Vec::new(),
+            };
 
-                nodes.insert(id, node);
-                (nodes, max_id.max(id))
-            },
-        );
+            let mut node = crate::search::Node::new(
+                NodeId(id), parent_id.map(NodeId), move_uci, node_type, epd, move_sequence,
+            );
+            node.visit_count = visit_count;
+            node.total_value = total_value;
+            node.prior = prior;
+            node.children = children;
+            node.expanded = expanded;
+            node.terminal_value = terminal_value;
 
-        Some(crate::search::SearchTree::from_nodes(nodes, 0, max_id + 1))
+            node_map.insert(id, node);
+            max_id = max_id.max(id);
+        });
+
+        // Build Vec arena: index i corresponds to NodeId(i)
+        let mut nodes = Vec::with_capacity((max_id + 1) as usize);
+        for i in 0..=max_id {
+            match node_map.remove(&i) {
+                Some(node) => nodes.push(node),
+                None => nodes.push(crate::search::Node::new(
+                    NodeId(i), None, None, crate::search::NodeType::Max,
+                    String::new(), String::new(),
+                )),
+            }
+        }
+
+        Some(crate::search::SearchTree::from_nodes(nodes, NodeId(0), max_id + 1))
     }
 
     pub fn clear_tree(&self, session_id: &str) -> Result<(), String> {

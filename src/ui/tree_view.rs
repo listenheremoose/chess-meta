@@ -6,7 +6,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
 use crate::app::Message;
 use crate::coordinator::TreeSnapshot;
-use crate::search::NodeType;
+use crate::search::{NodeId, NodeType};
 use crate::ui::colors;
 
 /// State for the tree view canvas.
@@ -103,7 +103,7 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
             // Assign x positions per level
             let mut level_counts: HashMap<u32, usize> = HashMap::new();
-            let mut positions: HashMap<u64, Point> = HashMap::new();
+            let mut positions: HashMap<NodeId, Point> = HashMap::new();
 
             // Count nodes per level first
             visible.iter().for_each(|n| {

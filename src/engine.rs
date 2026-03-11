@@ -47,6 +47,8 @@ pub struct Engine {
     child: Child,
     stdin: ChildStdin,
     reader: BufReader<std::process::ChildStdout>,
+    /// Reused across reads to avoid repeated allocation.
+    line_buffer: String,
     query_count: u32,
     ucinewgame_interval: u32,
 }
@@ -79,6 +81,7 @@ impl Engine {
             child,
             stdin,
             reader,
+            line_buffer: String::with_capacity(512),
             query_count: 0,
             ucinewgame_interval,
         };
@@ -122,18 +125,19 @@ impl Engine {
         let mut verbose_stats: HashMap<String, (f32, Option<f32>)> = HashMap::new();
 
         loop {
-            let line = self.read_line()?;
+            self.read_line_into_buffer()?;
+            let line = self.line_buffer.trim();
 
             if line.starts_with("bestmove") {
                 break;
             }
 
             if line.starts_with("info string") {
-                if let Some((uci_move, policy_pct, q_value)) = parse_verbose_move_stats(&line) {
+                if let Some((uci_move, policy_pct, q_value)) = parse_verbose_move_stats(line) {
                     verbose_stats.insert(uci_move, (policy_pct, q_value));
                 }
             } else if line.starts_with("info") && line.contains("wdl") {
-                if let Some(parsed_wdl) = parse_wdl(&line) {
+                if let Some(parsed_wdl) = parse_wdl(line) {
                     wdl = parsed_wdl;
                 }
             }
@@ -163,10 +167,11 @@ impl Engine {
         Ok(())
     }
 
-    fn read_line(&mut self) -> Result<String, String> {
-        let mut line = String::new();
+    /// Read a line into the reusable buffer, avoiding repeated allocation.
+    fn read_line_into_buffer(&mut self) -> Result<(), String> {
+        self.line_buffer.clear();
         let bytes = self.reader
-            .read_line(&mut line)
+            .read_line(&mut self.line_buffer)
             .map_err(|e| {
                 log::error!("Failed to read from engine: {e}");
                 format!("Failed to read from engine: {e}")
@@ -175,13 +180,13 @@ impl Engine {
             log::error!("Engine process terminated unexpectedly");
             return Err("Engine process terminated unexpectedly".to_string());
         }
-        Ok(line.trim().to_string())
+        Ok(())
     }
 
     fn wait_for(&mut self, expected: &str) -> Result<(), String> {
         loop {
-            let line = self.read_line()?;
-            if line.starts_with(expected) {
+            self.read_line_into_buffer()?;
+            if self.line_buffer.trim().starts_with(expected) {
                 return Ok(());
             }
         }

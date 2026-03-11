@@ -9,6 +9,8 @@ pub struct MaiaEngine {
     child: Child,
     stdin: ChildStdin,
     reader: BufReader<std::process::ChildStdout>,
+    /// Reused across reads to avoid repeated allocation.
+    line_buffer: String,
     query_count: u32,
     ucinewgame_interval: u32,
 }
@@ -36,6 +38,7 @@ impl MaiaEngine {
             child,
             stdin,
             reader,
+            line_buffer: String::with_capacity(512),
             query_count: 0,
             ucinewgame_interval,
         };
@@ -83,14 +86,15 @@ impl MaiaEngine {
         let mut policy_map: HashMap<String, f32> = HashMap::new();
 
         loop {
-            let line = self.read_line()?;
+            self.read_line_into_buffer()?;
+            let line = self.line_buffer.trim();
 
             if line.starts_with("bestmove") {
                 break;
             }
 
             if line.starts_with("info string") {
-                if let Some((uci_move, policy_pct, _q_value)) = parse_verbose_move_stats(&line) {
+                if let Some((uci_move, policy_pct, _q_value)) = parse_verbose_move_stats(line) {
                     policy_map.insert(uci_move, policy_pct);
                 }
             }
@@ -108,10 +112,11 @@ impl MaiaEngine {
         Ok(())
     }
 
-    fn read_line(&mut self) -> Result<String, String> {
-        let mut line = String::new();
+    /// Read a line into the reusable buffer, avoiding repeated allocation.
+    fn read_line_into_buffer(&mut self) -> Result<(), String> {
+        self.line_buffer.clear();
         let bytes = self.reader
-            .read_line(&mut line)
+            .read_line(&mut self.line_buffer)
             .map_err(|e| {
                 log::error!("Failed to read from Maia engine: {e}");
                 format!("Failed to read from Maia engine: {e}")
@@ -120,13 +125,13 @@ impl MaiaEngine {
             log::error!("Maia engine process terminated unexpectedly");
             return Err("Maia engine process terminated unexpectedly".to_string());
         }
-        Ok(line.trim().to_string())
+        Ok(())
     }
 
     fn wait_for(&mut self, expected: &str) -> Result<(), String> {
         loop {
-            let line = self.read_line()?;
-            if line.starts_with(expected) {
+            self.read_line_into_buffer()?;
+            if self.line_buffer.trim().starts_with(expected) {
                 return Ok(());
             }
         }

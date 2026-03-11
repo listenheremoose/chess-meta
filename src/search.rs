@@ -1,7 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::config::Config;
 use crate::engine::lookup_castling_aware;
+
+/// Unique identifier for a node in the MCTS tree.
+/// Indexes directly into the arena `Vec<Node>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct NodeId(pub u32);
+
+impl NodeId {
+    #[inline]
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 /// Node type in the MCTS tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,11 +27,25 @@ pub enum NodeType {
     Chance,
 }
 
+/// Pre-allocated buffers reused across MCTS iterations.
+/// Avoids heap allocation in the hot select/backprop loop.
+pub struct SearchState {
+    chance_probs: Vec<f64>,
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            chance_probs: Vec::with_capacity(64),
+        }
+    }
+}
+
 /// A single node in the MCTS tree.
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub id: u64,
-    pub parent: Option<u64>,
+    pub id: NodeId,
+    pub parent: Option<NodeId>,
     pub move_uci: Option<String>,
     pub node_type: NodeType,
     pub epd: String,
@@ -26,7 +55,7 @@ pub struct Node {
     pub total_value: f64,
     pub prior: f64,
 
-    pub children: Vec<u64>,
+    pub children: Vec<NodeId>,
     pub expanded: bool,
 
     /// Engine policy (percentage, 0-100) per move from this position.
@@ -43,8 +72,8 @@ pub struct Node {
 
 impl Node {
     pub fn new(
-        id: u64,
-        parent: Option<u64>,
+        id: NodeId,
+        parent: Option<NodeId>,
         move_uci: Option<String>,
         node_type: NodeType,
         epd: String,
@@ -71,6 +100,7 @@ impl Node {
     }
 
     /// Average value from White's perspective.
+    #[inline]
     pub fn q_value(&self) -> f64 {
         if self.visit_count == 0 {
             0.5
@@ -80,27 +110,28 @@ impl Node {
     }
 }
 
-/// The full MCTS tree, stored as a flat arena.
+/// The full MCTS tree, stored as a flat Vec arena.
+/// Nodes are indexed by `NodeId` which maps directly to the Vec index.
 pub struct SearchTree {
-    pub nodes: HashMap<u64, Node>,
-    pub root_id: u64,
-    next_id: u64,
+    pub nodes: Vec<Node>,
+    pub root_id: NodeId,
+    next_id: u32,
 }
 
 impl SearchTree {
     pub fn new(root_epd: String, root_move_sequence: String, root_type: NodeType) -> Self {
-        let root = Node::new(0, None, None, root_type, root_epd, root_move_sequence);
-        let mut nodes = HashMap::new();
-        nodes.insert(0, root);
+        let root = Node::new(NodeId(0), None, None, root_type, root_epd, root_move_sequence);
+        let nodes = vec![root];
         Self {
             nodes,
-            root_id: 0,
+            root_id: NodeId(0),
             next_id: 1,
         }
     }
 
-    /// Reconstruct a tree from pre-built nodes (e.g., loaded from DB).
-    pub fn from_nodes(nodes: HashMap<u64, Node>, root_id: u64, next_id: u64) -> Self {
+    /// Reconstruct a tree from a pre-built node Vec (e.g., loaded from DB).
+    /// Nodes must be ordered by their ID (index 0 = NodeId(0), etc.).
+    pub fn from_nodes(nodes: Vec<Node>, root_id: NodeId, next_id: u32) -> Self {
         Self {
             nodes,
             root_id,
@@ -108,34 +139,38 @@ impl SearchTree {
         }
     }
 
+    #[inline]
     pub fn root(&self) -> &Node {
-        &self.nodes[&self.root_id]
+        &self.nodes[self.root_id.index()]
     }
 
     #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn root_mut(&mut self) -> &mut Node {
-        self.nodes.get_mut(&self.root_id).unwrap()
+        let idx = self.root_id.index();
+        &mut self.nodes[idx]
     }
 
-    pub fn get(&self, id: u64) -> Option<&Node> {
-        self.nodes.get(&id)
+    #[inline]
+    pub fn get(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(id.index())
     }
 
-    pub fn get_mut(&mut self, id: u64) -> Option<&mut Node> {
-        self.nodes.get_mut(&id)
+    #[inline]
+    pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.nodes.get_mut(id.index())
     }
 
     /// Add a child node and return its ID.
     pub fn add_child(
         &mut self,
-        parent_id: u64,
+        parent_id: NodeId,
         move_uci: String,
         node_type: NodeType,
         epd: String,
         move_sequence: String,
         prior: f64,
-    ) -> u64 {
-        let id = self.next_id;
+    ) -> NodeId {
+        let id = NodeId(self.next_id);
         self.next_id += 1;
 
         let mut node = Node::new(
@@ -148,11 +183,12 @@ impl SearchTree {
         );
         node.prior = prior;
 
-        self.nodes.insert(id, node);
-        self.nodes.get_mut(&parent_id).unwrap().children.push(id);
+        self.nodes.push(node);
+        self.nodes[parent_id.index()].children.push(id);
         id
     }
 
+    #[inline]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -160,18 +196,18 @@ impl SearchTree {
 
 /// Select a leaf node from the tree using PUCT at MAX nodes and
 /// probability-weighted sampling at CHANCE nodes.
-pub fn select(tree: &SearchTree, config: &Config) -> u64 {
+pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> NodeId {
     let mut current = tree.root_id;
     #[cfg(feature = "search-trace")]
     let mut depth = 0u32;
 
     loop {
-        let node = &tree.nodes[&current];
+        let node = &tree.nodes[current.index()];
 
         // If not expanded or terminal, this is the leaf
         if !node.expanded || node.children.is_empty() {
             #[cfg(feature = "search-trace")]
-            log::trace!("select leaf node_id={current} depth={depth}");
+            log::trace!("select leaf node_id={:?} depth={depth}", current);
             return current;
         }
 
@@ -180,7 +216,7 @@ pub fn select(tree: &SearchTree, config: &Config) -> u64 {
                 current = select_puct(tree, current, config);
             }
             NodeType::Chance => {
-                current = select_chance(tree, current, config);
+                current = select_chance(tree, current, config, state);
             }
         }
         #[cfg(feature = "search-trace")]
@@ -189,8 +225,8 @@ pub fn select(tree: &SearchTree, config: &Config) -> u64 {
 }
 
 /// PUCT selection at a MAX node. Picks the child with the highest UCB score.
-fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
-    let node = &tree.nodes[&node_id];
+fn select_puct(tree: &SearchTree, node_id: NodeId, config: &Config) -> NodeId {
+    let node = &tree.nodes[node_id.index()];
     let parent_visits = node.visit_count as f64;
     let is_white_turn = is_white_to_move_from_node(node);
 
@@ -203,7 +239,7 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
     let best_scored = node.children
         .iter()
         .map(|&child_id| {
-            let child = &tree.nodes[&child_id];
+            let child = &tree.nodes[child_id.index()];
             let child_visits = child.visit_count as f64;
 
             // Q value from side-to-move perspective
@@ -222,7 +258,7 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
 
             let score = q + u;
             #[cfg(feature = "search-trace")]
-            log::trace!("puct child={child_id} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child.prior);
+            log::trace!("puct child={:?} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child_id, child.prior);
             (child_id, score)
         })
         .reduce(|(id_a, score_a), (id_b, score_b)| {
@@ -235,46 +271,47 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
     };
 
     #[cfg(feature = "search-trace")]
-    log::trace!("puct selected={best_child}");
+    log::trace!("puct selected={:?}", best_child);
 
     best_child
 }
 
 /// Probability-weighted selection at a CHANCE node.
 /// Samples proportional to Maia's distribution with temperature and floor.
-fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
-    let node = &tree.nodes[&node_id];
+/// Uses pre-allocated buffer from `SearchState` to avoid allocation.
+fn select_chance(tree: &SearchTree, node_id: NodeId, config: &Config, state: &mut SearchState) -> NodeId {
+    let node = &tree.nodes[node_id.index()];
     let children = &node.children;
 
     if children.is_empty() {
         return node_id;
     }
 
-    // Build distribution from priors (already set from Maia during expansion)
-    let mut probs: Vec<f64> = children
-        .iter()
-        .map(|&cid| tree.nodes[&cid].prior)
-        .collect();
+    // Reuse pre-allocated buffer
+    state.chance_probs.clear();
+    state.chance_probs.extend(
+        children.iter().map(|&cid| tree.nodes[cid.index()].prior),
+    );
 
-    // Step 2: Apply temperature (before floor, per docs)
+    // Apply temperature (before floor, per docs)
     if (config.maia_temperature - 1.0).abs() > 1e-6 {
         let inv_t = 1.0 / config.maia_temperature;
-        probs.iter_mut().for_each(|p| *p = p.powf(inv_t));
+        state.chance_probs.iter_mut().for_each(|p| *p = p.powf(inv_t));
     }
 
-    // Step 3: Apply exploration floor (after temperature, guarantees minimum probability)
-    probs.iter_mut().for_each(|p| *p = p.max(config.maia_floor));
+    // Apply exploration floor (after temperature, guarantees minimum probability)
+    state.chance_probs.iter_mut().for_each(|p| *p = p.max(config.maia_floor));
 
     // Normalize
-    let sum: f64 = probs.iter().sum();
+    let sum: f64 = state.chance_probs.iter().sum();
     if sum <= 0.0 {
         return children[0];
     }
-    probs.iter_mut().for_each(|p| *p /= sum);
+    state.chance_probs.iter_mut().for_each(|p| *p /= sum);
 
     // Sample
     let r: f64 = rand::random();
-    let found = probs
+    let found = state.chance_probs
         .iter()
         .scan(0.0, |cumulative, &prob| {
             *cumulative += prob;
@@ -290,12 +327,12 @@ fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
 }
 
 /// Backpropagate a value (from White's perspective) up the tree.
-pub fn backpropagate(tree: &mut SearchTree, leaf_id: u64, value_white: f64) {
+pub fn backpropagate(tree: &mut SearchTree, leaf_id: NodeId, value_white: f64) {
     #[cfg(feature = "search-trace")]
-    log::trace!("backprop leaf={leaf_id} value={value_white:.4}");
+    log::trace!("backprop leaf={:?} value={value_white:.4}", leaf_id);
     let mut current = Some(leaf_id);
     while let Some(id) = current {
-        let node = tree.nodes.get_mut(&id).unwrap();
+        let node = &mut tree.nodes[id.index()];
         node.visit_count += 1;
         node.total_value += value_white;
         current = node.parent;
@@ -466,7 +503,7 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
 pub struct RootMoveInfo {
     pub uci_move: String,
     #[allow(dead_code)] // Read by integration tests (separate crate, invisible to lint)
-    pub node_id: u64,
+    pub node_id: NodeId,
     pub visits: u64,
     /// Engine policy percentage for this move (0-100 from NN).
     pub engine_policy: Option<f64>,
@@ -479,8 +516,8 @@ pub struct RootMoveInfo {
 }
 
 /// Compute worst-case value against likely opponent responses.
-fn worst_case_value(tree: &SearchTree, node_id: u64, is_white: bool) -> f64 {
-    let node = &tree.nodes[&node_id];
+fn worst_case_value(tree: &SearchTree, node_id: NodeId, is_white: bool) -> f64 {
+    let node = &tree.nodes[node_id.index()];
     if node.children.is_empty() {
         let q = node.q_value();
         return if is_white { q } else { 1.0 - q };
@@ -490,7 +527,7 @@ fn worst_case_value(tree: &SearchTree, node_id: u64, is_white: bool) -> f64 {
     let qualifying_children = node.children
         .iter()
         .filter_map(|&child_id| {
-            let child = &tree.nodes[&child_id];
+            let child = &tree.nodes[child_id.index()];
             if child.visit_count > 0 && child.prior > 0.10 {
                 let child_q_stm = if is_white { child.q_value() } else { 1.0 - child.q_value() };
                 Some(child_q_stm)
@@ -512,6 +549,7 @@ fn worst_case_value(tree: &SearchTree, node_id: u64, is_white: bool) -> f64 {
 }
 
 /// Heuristic: determine if White is to move based on the move sequence.
+#[inline]
 fn is_white_to_move_from_node(node: &Node) -> bool {
     if node.move_sequence.is_empty() {
         true
@@ -530,7 +568,7 @@ mod tests {
     use super::{
         backpropagate, candidate_moves_chance, candidate_moves_max,
         is_white_to_move_from_node, root_move_infos, select, select_chance, select_puct,
-        worst_case_value, Node, NodeType, SearchTree,
+        worst_case_value, Node, NodeId, NodeType, SearchState, SearchTree,
     };
 
     // ── TreeBuilder ──────────────────────────────────────────────────────
@@ -556,7 +594,7 @@ mod tests {
         /// Add a child to the given parent with preset visits and Q value.
         fn with_child(
             mut self,
-            parent_id: u64,
+            parent_id: NodeId,
             move_uci: &str,
             node_type: NodeType,
             prior: f64,
@@ -568,7 +606,7 @@ mod tests {
                 move_uci.to_string(),
                 node_type,
                 format!("pos_after_{move_uci}"),
-                if parent_id == 0 {
+                if parent_id == NodeId(0) {
                     move_uci.to_string()
                 } else {
                     format!("e2e4 {move_uci}")
@@ -582,7 +620,7 @@ mod tests {
         }
 
         /// Mark a node as expanded.
-        fn expanded(mut self, node_id: u64) -> Self {
+        fn expanded(mut self, node_id: NodeId) -> Self {
             self.tree.get_mut(node_id).unwrap().expanded = true;
             self
         }
@@ -596,39 +634,34 @@ mod tests {
 
     #[test]
     fn puct_with_all_unvisited_selects_highest_prior() {
-        // All children have 0 visits — PUCT should pick the one with highest prior
-        // (since Q is equal for all via FPU, the U term dominates)
         let tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.6, 0, 0.0)
-            .with_child(0, "d2d4", NodeType::Chance, 0.3, 0, 0.0)
-            .with_child(0, "g1f3", NodeType::Chance, 0.1, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.6, 0, 0.0)
+            .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.3, 0, 0.0)
+            .with_child(NodeId(0), "g1f3", NodeType::Chance, 0.1, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
 
-        // Give root some visits so parent_visits > 0
         let config = Config::default();
-        let selected = select_puct(&tree, 0, &config);
+        let selected = select_puct(&tree, NodeId(0), &config);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         assert_eq!(selected_move, Some("e2e4"));
     }
 
     #[test]
     fn puct_balances_exploitation_and_exploration() {
-        // Child A: high Q, many visits (exploited). Child B: lower Q, few visits (should explore).
-        // With enough visit imbalance, B's U term should overcome A's Q advantage.
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 500, 0.6)
-            .with_child(0, "d2d4", NodeType::Chance, 0.5, 1, 0.55)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 500, 0.6)
+            .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.5, 1, 0.55)
+            .expanded(NodeId(0))
             .build();
         {
-            let root = tree.get_mut(0).unwrap();
+            let root = tree.get_mut(NodeId(0)).unwrap();
             root.visit_count = 501;
             root.total_value = 0.6 * 500.0 + 0.55;
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, 0, &config);
+        let selected = select_puct(&tree, NodeId(0), &config);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         // d2d4 has far fewer visits — its U term should win
         assert_eq!(selected_move, Some("d2d4"));
@@ -636,44 +669,38 @@ mod tests {
 
     #[test]
     fn puct_fpu_uses_parent_q_minus_reduction() {
-        // Among two unvisited children, both get the same FPU Q = parent_Q_stm - fpu_reduction.
-        // The one with higher prior wins (via the U term).
-        // This verifies FPU doesn't use the default 0.5 but the parent's actual Q.
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.6, 0, 0.0)
-            .with_child(0, "d2d4", NodeType::Chance, 0.4, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.6, 0, 0.0)
+            .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.4, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
         {
-            let root = tree.get_mut(0).unwrap();
+            let root = tree.get_mut(NodeId(0)).unwrap();
             root.visit_count = 100;
             root.total_value = 70.0; // Q = 0.7 → FPU = 0.7 - 0.3 = 0.4
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, 0, &config);
+        let selected = select_puct(&tree, NodeId(0), &config);
         // Higher prior wins when both have equal FPU Q
         assert_eq!(tree.get(selected).unwrap().move_uci.as_deref(), Some("e2e4"));
     }
 
     #[test]
     fn puct_perspective_converts_q_for_black() {
-        // Root has Black to move (odd number of moves in sequence).
-        // Child A: Q_white=0.3 → Q_black=0.7. Child B: Q_white=0.6 → Q_black=0.4.
-        // Black should prefer child A (lower Q_white = better for Black).
         let mut tree = TreeBuilder::with_root("e2e4", NodeType::Max)
-            .with_child(0, "e7e5", NodeType::Chance, 0.5, 50, 0.3)
-            .with_child(0, "d7d5", NodeType::Chance, 0.5, 50, 0.6)
-            .expanded(0)
+            .with_child(NodeId(0), "e7e5", NodeType::Chance, 0.5, 50, 0.3)
+            .with_child(NodeId(0), "d7d5", NodeType::Chance, 0.5, 50, 0.6)
+            .expanded(NodeId(0))
             .build();
         {
-            let root = tree.get_mut(0).unwrap();
+            let root = tree.get_mut(NodeId(0)).unwrap();
             root.visit_count = 100;
             root.total_value = 45.0;
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, 0, &config);
+        let selected = select_puct(&tree, NodeId(0), &config);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         assert_eq!(selected_move, Some("e7e5")); // Q_white=0.3 → Q_black=0.7
     }
@@ -682,56 +709,50 @@ mod tests {
 
     #[test]
     fn chance_samples_proportional_to_prior() {
-        // With a dominant prior (0.99), nearly all samples should pick that child.
         let tree = TreeBuilder::with_root("", NodeType::Chance)
-            .with_child(0, "e7e5", NodeType::Max, 0.99, 0, 0.0)
-            .with_child(0, "d7d5", NodeType::Max, 0.01, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e7e5", NodeType::Max, 0.99, 0, 0.0)
+            .with_child(NodeId(0), "d7d5", NodeType::Max, 0.01, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
 
         let config = Config::default();
+        let mut state = SearchState::new();
         let mut e5_count = 0;
         for _ in 0..1000 {
-            let selected = select_chance(&tree, 0, &config);
+            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
             if tree.get(selected).unwrap().move_uci.as_deref() == Some("e7e5") {
                 e5_count += 1;
             }
         }
-        // With floor=0.01, e7e5 gets ~0.99/(0.99+0.01)=0.99 of the mass after floor
-        // (already above floor). Should be selected ~99% of the time.
         assert!(e5_count > 950, "e5_count was {e5_count}, expected >950");
     }
 
     #[test]
     fn chance_floor_prevents_zero_probability() {
-        // Without floor, the tiny-prior child would almost never be selected.
-        // With floor=0.01, it should get at least some visits.
         let tree = TreeBuilder::with_root("", NodeType::Chance)
-            .with_child(0, "e7e5", NodeType::Max, 0.98, 0, 0.0)
-            .with_child(0, "d7d5", NodeType::Max, 0.001, 0, 0.0) // Below floor
-            .expanded(0)
+            .with_child(NodeId(0), "e7e5", NodeType::Max, 0.98, 0, 0.0)
+            .with_child(NodeId(0), "d7d5", NodeType::Max, 0.001, 0, 0.0) // Below floor
+            .expanded(NodeId(0))
             .build();
 
         let config = Config::default(); // floor = 0.01
+        let mut state = SearchState::new();
         let mut d5_count = 0;
         for _ in 0..10000 {
-            let selected = select_chance(&tree, 0, &config);
+            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
             if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
                 d5_count += 1;
             }
         }
-        // d7d5 prior=0.001 is raised to floor=0.01. After normalize:
-        // d7d5 gets ~0.01/(0.98+0.01) ≈ 1%. Over 10000 trials, expect ~100.
         assert!(d5_count > 30, "d5_count was {d5_count}, expected >30 (floor should help)");
     }
 
     #[test]
     fn chance_temperature_spreads_distribution() {
-        // With temperature > 1, the distribution becomes more uniform.
         let tree = TreeBuilder::with_root("", NodeType::Chance)
-            .with_child(0, "e7e5", NodeType::Max, 0.9, 0, 0.0)
-            .with_child(0, "d7d5", NodeType::Max, 0.1, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e7e5", NodeType::Max, 0.9, 0, 0.0)
+            .with_child(NodeId(0), "d7d5", NodeType::Max, 0.1, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
 
         // High temperature spreads mass
@@ -739,39 +760,37 @@ mod tests {
         config.maia_temperature = 3.0;
         config.maia_floor = 0.0; // Disable floor to isolate temperature effect
 
+        let mut state = SearchState::new();
         let mut d5_count = 0;
         for _ in 0..10000 {
-            let selected = select_chance(&tree, 0, &config);
+            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
             if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
                 d5_count += 1;
             }
         }
-        // At T=3.0: 0.9^(1/3)≈0.965, 0.1^(1/3)≈0.464 → d5 gets ~32%
         assert!(d5_count > 2500, "d5_count was {d5_count}, expected >2500 with T=3.0");
     }
 
     #[test]
     fn chance_floor_applied_after_temperature() {
-        // With low temperature (sharpening), tiny priors get reduced further.
-        // Floor should rescue them AFTER temperature is applied.
         let tree = TreeBuilder::with_root("", NodeType::Chance)
-            .with_child(0, "e7e5", NodeType::Max, 0.95, 0, 0.0)
-            .with_child(0, "d7d5", NodeType::Max, 0.05, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e7e5", NodeType::Max, 0.95, 0, 0.0)
+            .with_child(NodeId(0), "d7d5", NodeType::Max, 0.05, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
 
         let mut config = Config::default();
         config.maia_temperature = 0.5; // Sharpening
         config.maia_floor = 0.01;
 
+        let mut state = SearchState::new();
         let mut d5_count = 0;
         for _ in 0..10000 {
-            let selected = select_chance(&tree, 0, &config);
+            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
             if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
                 d5_count += 1;
             }
         }
-        // Without floor: 0.05^2=0.0025 → ~0.3%. Floor rescues to at least ~1%.
         assert!(d5_count > 50, "d5_count was {d5_count}, floor should guarantee >0.5% even with sharpening");
     }
 
@@ -780,14 +799,15 @@ mod tests {
     #[test]
     fn select_returns_unexpanded_leaf() {
         let tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
 
         let config = Config::default();
-        let leaf = select(&tree, &config);
+        let mut state = SearchState::new();
+        let leaf = select(&tree, &config, &mut state);
         // Should return the unexpanded child
-        assert_ne!(leaf, 0);
+        assert_ne!(leaf, NodeId(0));
         assert!(!tree.get(leaf).unwrap().expanded);
     }
 
@@ -795,8 +815,9 @@ mod tests {
     fn select_returns_root_when_unexpanded() {
         let tree = TreeBuilder::new().build();
         let config = Config::default();
-        let leaf = select(&tree, &config);
-        assert_eq!(leaf, 0);
+        let mut state = SearchState::new();
+        let leaf = select(&tree, &config, &mut state);
+        assert_eq!(leaf, NodeId(0));
     }
 
     // ── Backpropagation ──────────────────────────────────────────────────
@@ -804,8 +825,8 @@ mod tests {
     #[test]
     fn backprop_updates_leaf_and_ancestors() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
         let child_id = tree.root().children[0];
 
@@ -820,8 +841,8 @@ mod tests {
     #[test]
     fn backprop_accumulates_across_multiple_visits() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
         let child_id = tree.root().children[0];
 
@@ -835,8 +856,8 @@ mod tests {
     #[test]
     fn backprop_three_levels_deep() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 0, 0.0)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 0, 0.0)
+            .expanded(NodeId(0))
             .build();
         let child_id = tree.root().children[0];
         let grandchild_id = tree.add_child(
@@ -950,12 +971,9 @@ mod tests {
 
     #[test]
     fn worst_case_filters_low_prior_children() {
-        // CHANCE node (after our move) with two opponent responses:
-        // e7e5 has prior 0.8 (>10%), d7d5 has prior 0.05 (<10%).
-        // d7d5 has Q=0.2 (terrible for us) but should be ignored due to low prior.
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 10, 0.5)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 10, 0.5)
+            .expanded(NodeId(0))
             .build();
 
         let chance_id = tree.root().children[0];
@@ -985,8 +1003,8 @@ mod tests {
     #[test]
     fn worst_case_returns_node_q_when_no_children_qualify() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 10, 0.55)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 10, 0.55)
+            .expanded(NodeId(0))
             .build();
 
         let chance_id = tree.root().children[0];
@@ -1008,8 +1026,8 @@ mod tests {
     #[test]
     fn worst_case_returns_minimum_among_qualifying_children() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 10, 0.5)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 10, 0.5)
+            .expanded(NodeId(0))
             .build();
 
         let chance_id = tree.root().children[0];
@@ -1038,13 +1056,13 @@ mod tests {
     #[test]
     fn root_move_infos_sorted_by_practical_q_descending() {
         let mut tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 100, 0.4)
-            .with_child(0, "d2d4", NodeType::Chance, 0.3, 100, 0.7)
-            .with_child(0, "g1f3", NodeType::Chance, 0.2, 100, 0.55)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 100, 0.4)
+            .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.3, 100, 0.7)
+            .with_child(NodeId(0), "g1f3", NodeType::Chance, 0.2, 100, 0.55)
+            .expanded(NodeId(0))
             .build();
         {
-            let root = tree.get_mut(0).unwrap();
+            let root = tree.get_mut(NodeId(0)).unwrap();
             root.visit_count = 300;
             root.total_value = 165.0;
         }
@@ -1061,9 +1079,9 @@ mod tests {
     #[test]
     fn root_move_infos_includes_unvisited_moves() {
         let tree = TreeBuilder::new()
-            .with_child(0, "e2e4", NodeType::Chance, 0.5, 0, 0.0)
-            .with_child(0, "d2d4", NodeType::Chance, 0.5, 10, 0.6)
-            .expanded(0)
+            .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 0, 0.0)
+            .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.5, 10, 0.6)
+            .expanded(NodeId(0))
             .build();
 
         let config = Config::default();
@@ -1077,12 +1095,12 @@ mod tests {
     fn root_move_infos_safety_blends_q_with_worst_case() {
         // Child with high average Q but bad worst-case should score lower with high safety
         let mut tree = TreeBuilder::new()
-            .with_child(0, "risky", NodeType::Chance, 0.5, 50, 0.7) // High average
-            .with_child(0, "safe", NodeType::Chance, 0.5, 50, 0.6) // Lower average
-            .expanded(0)
+            .with_child(NodeId(0), "risky", NodeType::Chance, 0.5, 50, 0.7) // High average
+            .with_child(NodeId(0), "safe", NodeType::Chance, 0.5, 50, 0.6) // Lower average
+            .expanded(NodeId(0))
             .build();
         {
-            let root = tree.get_mut(0).unwrap();
+            let root = tree.get_mut(NodeId(0)).unwrap();
             root.visit_count = 100;
             root.total_value = 65.0;
         }
@@ -1119,25 +1137,25 @@ mod tests {
 
     #[test]
     fn is_white_to_move_startpos_returns_true() {
-        let node = Node::new(0, None, None, NodeType::Max, "start".into(), "".into());
+        let node = Node::new(NodeId(0), None, None, NodeType::Max, "start".into(), "".into());
         assert!(is_white_to_move_from_node(&node));
     }
 
     #[test]
     fn is_white_to_move_after_one_move_returns_false() {
-        let node = Node::new(0, None, None, NodeType::Max, "pos".into(), "e2e4".into());
+        let node = Node::new(NodeId(0), None, None, NodeType::Max, "pos".into(), "e2e4".into());
         assert!(!is_white_to_move_from_node(&node));
     }
 
     #[test]
     fn is_white_to_move_after_two_moves_returns_true() {
-        let node = Node::new(0, None, None, NodeType::Max, "pos".into(), "e2e4 e7e5".into());
+        let node = Node::new(NodeId(0), None, None, NodeType::Max, "pos".into(), "e2e4 e7e5".into());
         assert!(is_white_to_move_from_node(&node));
     }
 
     #[test]
     fn q_value_defaults_to_half_when_unvisited() {
-        let node = Node::new(0, None, None, NodeType::Max, "pos".into(), "".into());
+        let node = Node::new(NodeId(0), None, None, NodeType::Max, "pos".into(), "".into());
         assert!((node.q_value() - 0.5).abs() < 0.001);
     }
 }

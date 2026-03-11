@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use chess_meta::config::Config;
 use chess_meta::position::PositionState;
 use chess_meta::search::{
-    NodeType, SearchTree, backpropagate, best_root_move, candidate_moves_chance,
-    candidate_moves_max, root_move_infos, select,
+    NodeId, NodeType, SearchState, SearchTree, backpropagate, best_root_move,
+    candidate_moves_chance, candidate_moves_max, root_move_infos, select,
 };
 
 /// Build a realistic tree from startpos with a few expanded MAX and CHANCE nodes.
@@ -20,7 +20,7 @@ fn build_test_tree() -> (SearchTree, Config) {
     let pos_nf3 = start.apply_uci("g1f3").unwrap();
 
     let e4_id = tree.add_child(
-        0,
+        NodeId(0),
         "e2e4".into(),
         NodeType::Chance,
         pos_e4.epd.clone(),
@@ -28,7 +28,7 @@ fn build_test_tree() -> (SearchTree, Config) {
         0.45,
     );
     let d4_id = tree.add_child(
-        0,
+        NodeId(0),
         "d2d4".into(),
         NodeType::Chance,
         pos_d4.epd.clone(),
@@ -36,7 +36,7 @@ fn build_test_tree() -> (SearchTree, Config) {
         0.35,
     );
     let _nf3_id = tree.add_child(
-        0,
+        NodeId(0),
         "g1f3".into(),
         NodeType::Chance,
         pos_nf3.epd.clone(),
@@ -114,11 +114,12 @@ fn tree_visit_counts_sum_correctly() {
 fn tree_values_stay_in_range() {
     let (tree, _config) = build_test_tree();
 
-    for (id, node) in &tree.nodes {
+    for node in &tree.nodes {
         let q = node.q_value();
         assert!(
             (0.0..=1.0).contains(&q),
-            "node {id} has q_value {q} outside [0, 1]"
+            "node {:?} has q_value {q} outside [0, 1]",
+            node.id
         );
     }
 }
@@ -127,7 +128,7 @@ fn tree_values_stay_in_range() {
 fn node_types_alternate() {
     let (tree, _config) = build_test_tree();
 
-    for (_id, node) in &tree.nodes {
+    for node in &tree.nodes {
         for &child_id in &node.children {
             let child = tree.get(child_id).unwrap();
             let expected = match node.node_type {
@@ -136,7 +137,7 @@ fn node_types_alternate() {
             };
             assert_eq!(
                 child.node_type, expected,
-                "child {} of {:?} node should be {:?}, got {:?}",
+                "child {:?} of {:?} node should be {:?}, got {:?}",
                 child_id, node.node_type, expected, child.node_type
             );
         }
@@ -147,15 +148,16 @@ fn node_types_alternate() {
 fn parent_child_links_consistent() {
     let (tree, _config) = build_test_tree();
 
-    for (&id, node) in &tree.nodes {
+    for node in &tree.nodes {
+        let id = node.id;
         // Every child should point back to this node as parent.
         for &child_id in &node.children {
             let child = tree.get(child_id).unwrap();
             assert_eq!(
                 child.parent,
                 Some(id),
-                "child {child_id} parent mismatch: expected {id}, got {:?}",
-                child.parent
+                "child {:?} parent mismatch: expected {:?}, got {:?}",
+                child_id, id, child.parent
             );
         }
 
@@ -164,7 +166,8 @@ fn parent_child_links_consistent() {
             let parent = tree.get(parent_id).unwrap();
             assert!(
                 parent.children.contains(&id),
-                "node {id} claims parent {parent_id}, but parent doesn't list it as child"
+                "node {:?} claims parent {:?}, but parent doesn't list it as child",
+                id, parent_id
             );
         }
     }
@@ -178,7 +181,7 @@ fn backprop_increments_all_ancestors() {
     let mut tree = SearchTree::new(start.epd.clone(), start.move_sequence.clone(), NodeType::Max);
 
     let pos_e4 = start.apply_uci("e2e4").unwrap();
-    let e4_id = tree.add_child(0, "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
+    let e4_id = tree.add_child(NodeId(0), "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
     tree.root_mut().expanded = true;
 
     let pos_e5 = pos_e4.apply_uci("e7e5").unwrap();
@@ -203,7 +206,7 @@ fn multiple_backprops_accumulate() {
     let mut tree = SearchTree::new(start.epd.clone(), start.move_sequence.clone(), NodeType::Max);
 
     let pos_e4 = start.apply_uci("e2e4").unwrap();
-    let e4_id = tree.add_child(0, "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
+    let e4_id = tree.add_child(NodeId(0), "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
     tree.root_mut().expanded = true;
 
     backpropagate(&mut tree, e4_id, 0.6);
@@ -224,14 +227,15 @@ fn multiple_backprops_accumulate() {
 #[test]
 fn select_returns_unexpanded_leaf() {
     let (tree, config) = build_test_tree();
-    let leaf = select(&tree, &config);
+    let mut state = SearchState::new();
+    let leaf = select(&tree, &config, &mut state);
     let node = tree.get(leaf).unwrap();
 
     // Selected node should be either unexpanded or have no children.
     assert!(
         !node.expanded || node.children.is_empty(),
-        "select returned expanded node {leaf} with {} children",
-        node.children.len()
+        "select returned expanded node {:?} with {} children",
+        leaf, node.children.len()
     );
 }
 
@@ -245,8 +249,8 @@ fn select_explores_unvisited_children() {
     let pos_e4 = start.apply_uci("e2e4").unwrap();
     let pos_d4 = start.apply_uci("d2d4").unwrap();
 
-    let e4_id = tree.add_child(0, "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
-    let d4_id = tree.add_child(0, "d2d4".into(), NodeType::Chance, pos_d4.epd.clone(), pos_d4.move_sequence.clone(), 0.5);
+    let e4_id = tree.add_child(NodeId(0), "e2e4".into(), NodeType::Chance, pos_e4.epd.clone(), pos_e4.move_sequence.clone(), 0.5);
+    let d4_id = tree.add_child(NodeId(0), "d2d4".into(), NodeType::Chance, pos_d4.epd.clone(), pos_d4.move_sequence.clone(), 0.5);
     tree.root_mut().expanded = true;
 
     // Visit e4 many times so d4 becomes attractive via exploration.
@@ -254,7 +258,8 @@ fn select_explores_unvisited_children() {
         backpropagate(&mut tree, e4_id, 0.5);
     }
 
-    let selected = select(&tree, &config);
+    let mut state = SearchState::new();
+    let selected = select(&tree, &config, &mut state);
     assert_eq!(selected, d4_id, "expected unvisited d4 to be selected");
 }
 
@@ -376,7 +381,7 @@ fn position_epd_consistency_across_tree() {
     // Verify that EPDs stored in tree nodes match what PositionState produces.
     let (tree, _config) = build_test_tree();
 
-    for (_id, node) in &tree.nodes {
+    for node in &tree.nodes {
         if node.move_sequence.is_empty() {
             let pos = PositionState::startpos();
             assert_eq!(node.epd, pos.epd, "root EPD mismatch");
