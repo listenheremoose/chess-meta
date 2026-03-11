@@ -17,7 +17,12 @@ Runs a modified MCTS (Monte Carlo Tree Search) where:
 The result: discover moves that may be slightly suboptimal objectively but lead to positions
 where humans consistently struggle, yielding higher practical win rates.
 
-See [docs/mcts-design.md](docs/mcts-design.md) for the full algorithm specification.
+Design docs:
+- [docs/mcts-algorithm.md](docs/mcts-algorithm.md) — PUCT/CHANCE logic, selection, expansion, backprop, pseudocode
+- [docs/mcts-parameters.md](docs/mcts-parameters.md) — all tunable constants with defaults, ranges, rationale
+- [docs/lc0-integration.md](docs/lc0-integration.md) — UCI protocol, process management, caching, stability mitigations
+- [docs/known-issues.md](docs/known-issues.md) — weaknesses, mitigations, references
+- [docs/ui-design.md](docs/ui-design.md) — dashboard layout, panels, data flow, color palette
 
 ## Architecture
 
@@ -72,7 +77,7 @@ src/
 
 ## UI — Dashboard
 
-Single-window iced dashboard with four panels. See [docs/ui-design.md](docs/ui-design.md) for full spec.
+Single-window iced dashboard with four panels. See [docs/ui-design.md](docs/ui-design.md) for full spec and color palette.
 
 ### Top bar — Controls & Status
 - Position input (paste move sequence or select from saved)
