@@ -115,15 +115,19 @@ impl App {
         let top = controls::view(&self.move_input, self.coordinator.running, snapshot);
 
         // Root moves for the table
-        let root_moves = snapshot
-            .map(|s| s.root_moves.as_slice())
-            .unwrap_or(&[]);
+        let root_moves = match snapshot {
+            Some(s) => s.root_moves.as_slice(),
+            None => &[],
+        };
 
         // Left panel: move comparison table
         let left_panel = move_table::view(root_moves, self.selected_move.as_deref());
 
         // Right panel: tree visualization
-        let tree_snap = snapshot.and_then(|s| s.tree_snapshot.as_ref());
+        let tree_snap = match snapshot {
+            Some(s) => s.tree_snapshot.as_ref(),
+            None => None,
+        };
         let right_panel = tree_view::view(tree_snap, &self.tree_view_state, 10, 8);
 
         let main_panels = row![

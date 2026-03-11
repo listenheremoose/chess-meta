@@ -120,7 +120,10 @@ impl Coordinator {
         }
 
         let moves = root_move_infos(&tree, config);
-        let best = moves.first().map(|m| m.uci_move.clone());
+        let best = match moves.first() {
+            Some(m) => Some(m.uci_move.clone()),
+            None => None,
+        };
         let tree_snap = build_tree_snapshot(&tree, 10);
 
         self.latest_snapshot = Some(SearchSnapshot {
@@ -235,7 +238,11 @@ fn run_mcts(
     let session_id = move_sequence.clone();
 
     // Try to load existing tree from cache, otherwise create fresh
-    let mut tree = if let Some(loaded) = cache.as_ref().and_then(|c| c.load_tree(&session_id)) {
+    let cached_tree = match cache.as_ref() {
+        Some(c) => c.load_tree(&session_id),
+        None => None,
+    };
+    let mut tree = if let Some(loaded) = cached_tree {
         log::info!("Resumed tree with {} nodes", loaded.node_count());
         // Re-populate root eval data from engine/maia caches
         if let Some(c) = &cache {
@@ -281,11 +288,14 @@ fn run_mcts(
     // Send an initial snapshot immediately if we resumed a non-trivial tree
     if tree.node_count() > 1 {
         let moves = root_move_infos(&tree, &config);
-        let best = moves.first().map(|m| m.uci_move.clone());
+        let best = match moves.first() {
+            Some(m) => Some(m.uci_move.clone()),
+            None => None,
+        };
         if let Some(ref bm) = best {
             best_move_history.push((0, bm.clone()));
         }
-        if let Some(ref bm_info) = moves.first() {
+        if let Some(bm_info) = moves.first() {
             q_history.push((0, bm_info.practical_q));
         }
         let tree_snap = build_tree_snapshot(&tree, 10);
@@ -340,8 +350,14 @@ fn run_mcts(
         // Log search milestones every 100 iterations
         if iteration % 100 == 0 {
             let moves = root_move_infos(&tree, &config);
-            let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("?");
-            let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+            let best = match moves.first() {
+                Some(m) => m.uci_move.as_str(),
+                None => "?",
+            };
+            let best_q = match moves.first() {
+                Some(m) => m.practical_q,
+                None => 0.0,
+            };
             log::info!(
                 "Search milestone iteration={iteration} best={best} practical_q={best_q:.4} nodes={}",
                 tree.node_count()
@@ -363,14 +379,21 @@ fn run_mcts(
         if iteration % update_interval as u64 == 0 || at_node_limit {
             let elapsed = start_time.elapsed().as_secs_f64();
             let moves = root_move_infos(&tree, &config);
-            let best = moves.first().map(|m| m.uci_move.clone());
+            let best = match moves.first() {
+                Some(m) => Some(m.uci_move.clone()),
+                None => None,
+            };
 
             if let Some(ref bm) = best {
-                if best_move_history.last().map(|(_, m)| m) != Some(bm) {
+                let last_move = match best_move_history.last() {
+                    Some((_, m)) => Some(m),
+                    None => None,
+                };
+                if last_move != Some(bm) {
                     best_move_history.push((iteration, bm.clone()));
                 }
             }
-            if let Some(ref bm_info) = moves.first() {
+            if let Some(bm_info) = moves.first() {
                 q_history.push((iteration, bm_info.practical_q));
             }
 
@@ -396,8 +419,14 @@ fn run_mcts(
 
     let elapsed = start_time.elapsed().as_secs_f64();
     let moves = root_move_infos(&tree, &config);
-    let best = moves.first().map(|m| m.uci_move.as_str()).unwrap_or("none");
-    let best_q = moves.first().map(|m| m.practical_q).unwrap_or(0.0);
+    let best = match moves.first() {
+        Some(m) => m.uci_move.as_str(),
+        None => "none",
+    };
+    let best_q = match moves.first() {
+        Some(m) => m.practical_q,
+        None => 0.0,
+    };
     log::info!(
         "Search complete iterations={iteration} best={best} practical_q={best_q:.4} nodes={} elapsed={elapsed:.1}s cache_hits={cache_hits} cache_misses={cache_misses}",
         tree.node_count()
@@ -465,7 +494,11 @@ fn expand_and_evaluate(
     }
 
     // Get engine eval (check cache first)
-    let engine_eval = if let Some(cached) = cache.and_then(|c| c.get_engine_eval(&epd)) {
+    let cached_engine = match cache {
+        Some(c) => c.get_engine_eval(&epd),
+        None => None,
+    };
+    let engine_eval = if let Some(cached) = cached_engine {
         let (w, d, l, policy, q_values) = cached;
         *cache_hits += 1;
         EngineEval {
@@ -483,7 +516,11 @@ fn expand_and_evaluate(
     };
 
     // Get Maia prediction (check cache first)
-    let maia_policy = if let Some(cached) = cache.and_then(|c| c.get_maia_policy(&move_seq)) {
+    let cached_maia = match cache {
+        Some(c) => c.get_maia_policy(&move_seq),
+        None => None,
+    };
+    let maia_policy = if let Some(cached) = cached_maia {
         *cache_hits += 1;
         cached
     } else {
@@ -518,7 +555,7 @@ fn expand_and_evaluate(
         NodeType::Chance => NodeType::Max,
     };
 
-    for (uci_move, prior) in &candidates {
+    candidates.iter().for_each(|(uci_move, prior)| {
         match position.apply_uci(uci_move) {
             Ok(new_pos) => {
                 let child_terminal = new_pos.terminal_value();
@@ -538,7 +575,7 @@ fn expand_and_evaluate(
                 log::warn!("Failed to apply move {uci_move}: {e}");
             }
         }
-    }
+    });
 
     tree.get_mut(leaf_id).unwrap().expanded = true;
 
@@ -563,11 +600,11 @@ fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSnapshot {
                     depth,
                 });
 
-                for &child_id in &node.children {
-                    if depth < 10 {
-                        // Max depth for UI
+                if depth < 10 {
+                    // Max depth for UI
+                    node.children.iter().for_each(|&child_id| {
                         stack.push((child_id, depth + 1));
-                    }
+                    });
                 }
             }
         }

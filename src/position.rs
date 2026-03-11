@@ -25,27 +25,30 @@ impl PositionState {
 
     /// Create a position from a space-separated UCI move sequence.
     pub fn from_moves(moves_str: &str) -> Result<Self, String> {
-        let mut chess = Chess::default();
-        let mut move_sequence = String::new();
-
         if moves_str.trim().is_empty() {
             return Ok(Self::startpos());
         }
 
-        for token in moves_str.split_whitespace() {
-            let uci_move: UciMove = token
-                .parse()
-                .map_err(|e| format!("Invalid UCI move '{token}': {e}"))?;
-            let legal_move = uci_move
-                .to_move(&chess)
-                .map_err(|e| format!("Illegal move '{token}': {e}"))?;
-            chess.play_unchecked(&legal_move);
+        let (chess, move_sequence) = moves_str
+            .split_whitespace()
+            .try_fold(
+                (Chess::default(), String::new()),
+                |(mut chess, mut move_sequence), token| {
+                    let uci_move: UciMove = token
+                        .parse()
+                        .map_err(|e| format!("Invalid UCI move '{token}': {e}"))?;
+                    let legal_move = uci_move
+                        .to_move(&chess)
+                        .map_err(|e| format!("Illegal move '{token}': {e}"))?;
+                    chess.play_unchecked(&legal_move);
 
-            if !move_sequence.is_empty() {
-                move_sequence.push(' ');
-            }
-            move_sequence.push_str(token);
-        }
+                    if !move_sequence.is_empty() {
+                        move_sequence.push(' ');
+                    }
+                    move_sequence.push_str(token);
+                    Ok::<_, String>((chess, move_sequence))
+                },
+            )?;
 
         let epd = format_epd(&chess);
         Ok(Self {

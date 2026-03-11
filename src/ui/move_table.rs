@@ -22,28 +22,25 @@ pub fn view<'a>(
 
     let mut rows: Vec<Element<'a, Message>> = vec![header.into()];
 
-    for info in moves {
+    moves.iter().for_each(|info| {
         let is_selected = selected_move == Some(&info.uci_move);
 
-        let policy_str = info
-            .engine_policy
-            .map(|p| format!("{:.1}%", p))
-            .unwrap_or_else(|| "-".to_string());
+        let policy_str = match info.engine_policy {
+            Some(p) => format!("{:.1}%", p),
+            None => "-".to_string(),
+        };
 
-        let delta_str = info
-            .delta
-            .map(|d| format!("{:+.3}", d))
-            .unwrap_or_else(|| "-".to_string());
+        let delta_str = match info.delta {
+            Some(d) => format!("{:+.3}", d),
+            None => "-".to_string(),
+        };
 
-        let delta_color = info.delta.map(|d| {
-            if d > 0.01 {
-                colors::GREEN
-            } else if d < -0.01 {
-                colors::RED
-            } else {
-                colors::TEXT_DIM
-            }
-        });
+        let delta_color = match info.delta {
+            Some(d) if d > 0.01 => colors::GREEN,
+            Some(d) if d < -0.01 => colors::RED,
+            Some(_) => colors::TEXT_DIM,
+            None => colors::TEXT,
+        };
 
         let move_row = row![
             text(&info.uci_move).width(Length::FillPortion(2)).size(13),
@@ -54,7 +51,7 @@ pub fn view<'a>(
             text(delta_str)
                 .width(Length::FillPortion(2))
                 .size(13)
-                .color(delta_color.unwrap_or(colors::TEXT)),
+                .color(delta_color),
             text(format!("{}", info.visits))
                 .width(Length::FillPortion(2))
                 .size(13),
@@ -83,7 +80,7 @@ pub fn view<'a>(
                 rows.push(detail);
             }
         }
-    }
+    });
 
     let content = Column::with_children(rows).spacing(2);
 

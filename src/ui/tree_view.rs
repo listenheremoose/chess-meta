@@ -95,7 +95,10 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
             // Layout: simple layered tree
             // Group by depth
-            let max_depth = visible.iter().map(|n| n.depth).max().unwrap_or(0);
+            let max_depth = match visible.iter().map(|n| n.depth).max() {
+                Some(d) => d,
+                None => 0,
+            };
             let level_height = bounds.height / (max_depth as f32 + 2.0);
 
             // Assign x positions per level
@@ -103,24 +106,25 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
             let mut positions: HashMap<u64, Point> = HashMap::new();
 
             // Count nodes per level first
-            for n in &visible {
+            visible.iter().for_each(|n| {
                 *level_counts.entry(n.depth).or_insert(0) += 1;
-            }
+            });
 
             let mut level_indices: HashMap<u32, usize> = HashMap::new();
 
-            for n in &visible {
+            visible.iter().for_each(|n| {
                 let count = level_counts[&n.depth];
                 let idx = level_indices.entry(n.depth).or_insert(0);
                 let x = bounds.width * (*idx as f32 + 1.0) / (count as f32 + 1.0);
                 let y = level_height * (n.depth as f32 + 1.0);
                 positions.insert(n.id, Point::new(x, y));
                 *idx += 1;
-            }
+            });
 
             // Draw edges
-            for n in &visible {
-                if let Some(parent_id) = n.parent_id {
+            visible.iter()
+                .filter_map(|n| n.parent_id.map(|pid| (n, pid)))
+                .for_each(|(n, parent_id)| {
                     if let (Some(&child_pos), Some(&parent_pos)) =
                         (positions.get(&n.id), positions.get(&parent_id))
                     {
@@ -135,46 +139,46 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
                                 .with_width(1.0),
                         );
                     }
-                }
-            }
+                });
 
             // Draw nodes
-            let max_visits = visible.iter().map(|n| n.visit_count).max().unwrap_or(1) as f32;
+            let max_visits = match visible.iter().map(|n| n.visit_count).max() {
+                Some(v) => v,
+                None => 1,
+            } as f32;
 
-            for n in &visible {
-                let Some(&pos) = positions.get(&n.id) else {
-                    continue;
-                };
+            visible.iter()
+                .filter_map(|n| positions.get(&n.id).map(|&pos| (n, pos)))
+                .for_each(|(n, pos)| {
+                    let size = 4.0 + 16.0 * (n.visit_count as f32 / max_visits).sqrt();
 
-                let size = 4.0 + 16.0 * (n.visit_count as f32 / max_visits).sqrt();
+                    // Color by Q value: green (good for us) to red (bad)
+                    let q = n.q_value as f32;
+                    let node_color = if n.node_type == NodeType::Max {
+                        lerp_color(colors::RED, colors::GREEN, q)
+                    } else {
+                        lerp_color(colors::RED, colors::ORANGE, q)
+                    };
 
-                // Color by Q value: green (good for us) to red (bad)
-                let q = n.q_value as f32;
-                let node_color = if n.node_type == NodeType::Max {
-                    lerp_color(colors::RED, colors::GREEN, q)
-                } else {
-                    lerp_color(colors::RED, colors::ORANGE, q)
-                };
-
-                match n.node_type {
-                    NodeType::Max => draw_max_node(frame, pos, size, node_color),
-                    NodeType::Chance => draw_chance_node(frame, pos, size, node_color),
-                }
-
-                // Label for nodes with enough visits
-                if n.visit_count as f32 > max_visits * 0.05 {
-                    if let Some(ref uci) = n.move_uci {
-                        let label = Text {
-                            content: uci.clone(),
-                            position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
-                            color: colors::TEXT,
-                            size: iced::Pixels(10.0),
-                            ..Text::default()
-                        };
-                        frame.fill_text(label);
+                    match n.node_type {
+                        NodeType::Max => draw_max_node(frame, pos, size, node_color),
+                        NodeType::Chance => draw_chance_node(frame, pos, size, node_color),
                     }
-                }
-            }
+
+                    // Label for nodes with enough visits
+                    if n.visit_count as f32 > max_visits * 0.05 {
+                        if let Some(ref uci) = n.move_uci {
+                            let label = Text {
+                                content: uci.clone(),
+                                position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
+                                color: colors::TEXT,
+                                size: iced::Pixels(10.0),
+                                ..Text::default()
+                            };
+                            frame.fill_text(label);
+                        }
+                    }
+                });
         });
 
         vec![geometry]

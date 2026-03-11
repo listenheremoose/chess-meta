@@ -27,10 +27,10 @@ pub fn view<'a>(
 
     let stats = match snapshot {
         Some(snap) => {
-            let best = snap
-                .best_move
-                .as_deref()
-                .unwrap_or("-");
+            let best = match snap.best_move.as_deref() {
+                Some(m) => m,
+                None => "-",
+            };
             let iter_text = format!(
                 "Iter: {} | Nodes: {} | {:.0} it/s | Best: {}",
                 snap.iteration,
@@ -43,9 +43,10 @@ pub fn view<'a>(
         None => text("Ready").size(14),
     };
 
-    let elapsed = snapshot
-        .map(|s| format!("{:.1}s", s.elapsed_secs))
-        .unwrap_or_default();
+    let elapsed = match snapshot {
+        Some(s) => format!("{:.1}s", s.elapsed_secs),
+        None => String::new(),
+    };
     let elapsed_text = text(elapsed).size(14);
 
     let top_row = row![input, buttons, stats, elapsed_text]

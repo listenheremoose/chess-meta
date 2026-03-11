@@ -106,7 +106,7 @@ fn draw_best_move_timeline(
     // Assign colors to moves
     let move_colors = [colors::ACCENT, colors::BLUE, colors::ORANGE, colors::GREEN, colors::RED];
 
-    for (i, window) in history.windows(2).enumerate() {
+    history.windows(2).enumerate().for_each(|(i, window)| {
         let start_x = window[0].0 as f32 / max_iter * width;
         let end_x = window[1].0 as f32 / max_iter * width;
         let color = move_colors[i % move_colors.len()];
@@ -116,7 +116,7 @@ fn draw_best_move_timeline(
             Size::new(end_x - start_x, band_h),
             color,
         );
-    }
+    });
 
     // Last segment to current iteration
     if let Some(last) = history.last() {
@@ -187,7 +187,7 @@ fn draw_q_sparkline(
         .collect();
 
     // Draw line segments
-    for window in points.windows(2) {
+    points.windows(2).for_each(|window| {
         let line = Path::line(window[0], window[1]);
         frame.stroke(
             &line,
@@ -195,7 +195,7 @@ fn draw_q_sparkline(
                 .with_color(colors::ACCENT)
                 .with_width(1.5),
         );
-    }
+    });
 
     // Current Q value label
     if let Some(last) = q_history.last() {

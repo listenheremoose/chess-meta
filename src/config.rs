@@ -94,10 +94,13 @@ impl Config {
         let config = match std::fs::read_to_string(&path) {
             Ok(contents) => {
                 log::info!("Config loaded from {}", path.display());
-                toml::from_str(&contents).unwrap_or_else(|e| {
-                    log::warn!("Config parse error, using defaults: {e}");
-                    Self::default()
-                })
+                match toml::from_str(&contents) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        log::warn!("Config parse error, using defaults: {e}");
+                        Self::default()
+                    }
+                }
             }
             Err(_) => {
                 log::info!("No config file found, using defaults");

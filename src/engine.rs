@@ -33,7 +33,10 @@ impl EngineEval {
     #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn top_policy_moves(&self, n: usize) -> Vec<(String, f32)> {
         let mut moves: Vec<_> = self.policy.iter().map(|(m, p)| (m.clone(), *p)).collect();
-        moves.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        moves.sort_by(|a, b| match b.1.partial_cmp(&a.1) {
+            Some(ord) => ord,
+            None => std::cmp::Ordering::Equal,
+        });
         moves.truncate(n);
         moves
     }
@@ -137,14 +140,14 @@ impl Engine {
             }
         }
 
-        let mut policy = HashMap::new();
-        let mut q_values = HashMap::new();
-        for (uci_move, (p, q)) in &verbose_stats {
-            policy.insert(uci_move.clone(), *p);
-            if let Some(q_val) = q {
-                q_values.insert(uci_move.clone(), *q_val);
-            }
-        }
+        let policy: HashMap<String, f32> = verbose_stats
+            .iter()
+            .map(|(uci_move, (p, _))| (uci_move.clone(), *p))
+            .collect();
+        let q_values: HashMap<String, f32> = verbose_stats
+            .iter()
+            .filter_map(|(uci_move, (_, q))| q.map(|q_val| (uci_move.clone(), q_val)))
+            .collect();
 
         Ok(EngineEval {
             wdl,
@@ -235,11 +238,16 @@ pub fn parse_verbose_move_stats(line: &str) -> Option<(String, f32, Option<f32>)
         .trim();
     let policy_pct: f32 = pct_str.parse().ok()?;
 
-    let q_value = rest.find("(Q:").and_then(|q_start| {
-        let q_value_str = &rest[q_start + 3..];
-        let close = q_value_str.find(')')?;
-        q_value_str[..close].trim().parse::<f32>().ok()
-    });
+    let q_value = match rest.find("(Q:") {
+        Some(q_start) => {
+            let q_value_str = &rest[q_start + 3..];
+            match q_value_str.find(')') {
+                Some(close) => q_value_str[..close].trim().parse::<f32>().ok(),
+                None => None,
+            }
+        }
+        None => None,
+    };
 
     Some((uci_move.to_string(), policy_pct, q_value))
 }
@@ -263,9 +271,13 @@ pub fn lookup_castling_aware<T>(
 where
     T: Copy,
 {
-    map.get(uci_move)
-        .or_else(|| castle_to_king_rook(uci_move).and_then(|alt| map.get(alt)))
-        .copied()
+    match map.get(uci_move) {
+        Some(v) => Some(*v),
+        None => match castle_to_king_rook(uci_move) {
+            Some(alt) => map.get(alt).copied(),
+            None => None,
+        },
+    }
 }
 
 #[cfg(test)]

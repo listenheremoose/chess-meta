@@ -89,26 +89,32 @@ impl Cache {
         &self,
         epd: &str,
     ) -> Option<(u32, u32, u32, HashMap<String, f32>, HashMap<String, f32>)> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT wdl_w, wdl_d, wdl_l, policy_json, q_values_json FROM engine_cache WHERE epd = ?1",
-            )
-            .ok()?;
+        let mut stmt = match self.conn.prepare(
+            "SELECT wdl_w, wdl_d, wdl_l, policy_json, q_values_json FROM engine_cache WHERE epd = ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
-        stmt.query_row(params![epd], |row| {
+        match stmt.query_row(params![epd], |row| {
             let w: u32 = row.get(0)?;
             let d: u32 = row.get(1)?;
             let l: u32 = row.get(2)?;
             let policy_json: String = row.get(3)?;
             let q_json: String = row.get(4)?;
-            let policy: HashMap<String, f32> =
-                serde_json::from_str(&policy_json).unwrap_or_default();
-            let q_values: HashMap<String, f32> =
-                serde_json::from_str(&q_json).unwrap_or_default();
+            let policy: HashMap<String, f32> = match serde_json::from_str(&policy_json) {
+                Ok(p) => p,
+                Err(_) => HashMap::new(),
+            };
+            let q_values: HashMap<String, f32> = match serde_json::from_str(&q_json) {
+                Ok(q) => q,
+                Err(_) => HashMap::new(),
+            };
             Ok((w, d, l, policy, q_values))
-        })
-        .ok()
+        }) {
+            Ok(result) => Some(result),
+            Err(_) => None,
+        }
     }
 
     pub fn put_engine_eval(
@@ -135,16 +141,23 @@ impl Cache {
     // ── Maia cache (move-sequence-keyed) ────────────────────────────────
 
     pub fn get_maia_policy(&self, move_sequence: &str) -> Option<HashMap<String, f32>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT policy_json FROM maia_cache WHERE move_sequence = ?1")
-            .ok()?;
+        let mut stmt = match self.conn.prepare(
+            "SELECT policy_json FROM maia_cache WHERE move_sequence = ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
-        stmt.query_row(params![move_sequence], |row| {
+        match stmt.query_row(params![move_sequence], |row| {
             let json: String = row.get(0)?;
-            Ok(serde_json::from_str(&json).unwrap_or_default())
-        })
-        .ok()
+            Ok(match serde_json::from_str(&json) {
+                Ok(p) => p,
+                Err(_) => HashMap::new(),
+            })
+        }) {
+            Ok(result) => Some(result),
+            Err(_) => None,
+        }
     }
 
     pub fn put_maia_policy(
@@ -207,7 +220,7 @@ impl Cache {
             )
             .map_err(|e| format!("Failed to prepare save statement: {e}"))?;
 
-        for node in tree.nodes.values() {
+        tree.nodes.values().try_for_each(|node| {
             let node_type_str = match node.node_type {
                 crate::search::NodeType::Max => "Max",
                 crate::search::NodeType::Chance => "Chance",
@@ -217,7 +230,7 @@ impl Cache {
 
             stmt.execute(params![
                 node.id as i64,
-                node.parent.map(|p| p as i64),
+                match node.parent { Some(p) => Some(p as i64), None => None },
                 node.move_uci.as_deref(),
                 node_type_str,
                 node.epd,
@@ -231,7 +244,8 @@ impl Cache {
                 node.terminal_value,
             ])
             .map_err(|e| format!("Failed to save node {}: {e}", node.id))?;
-        }
+            Ok::<(), String>(())
+        })?;
 
         Ok(())
     }
@@ -241,15 +255,14 @@ impl Cache {
         &self,
         session_id: &str,
     ) -> Option<crate::search::SearchTree> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value FROM tree_nodes WHERE session_id = ?1",
-            )
-            .ok()?;
+        let mut stmt = match self.conn.prepare(
+            "SELECT id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value FROM tree_nodes WHERE session_id = ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
-        let rows: Vec<_> = stmt
-            .query_map(params![session_id], |row| {
+        let query_result = match stmt.query_map(params![session_id], |row| {
                 let id: i64 = row.get(0)?;
                 let parent_id: Option<i64> = row.get(1)?;
                 let move_uci: Option<String> = row.get(2)?;
@@ -264,7 +277,7 @@ impl Cache {
                 let terminal_value: Option<f64> = row.get(11)?;
                 Ok((
                     id as u64,
-                    parent_id.map(|p| p as u64),
+                    match parent_id { Some(p) => Some(p as u64), None => None },
                     move_uci,
                     node_type_str,
                     epd,
@@ -276,40 +289,51 @@ impl Cache {
                     expanded != 0,
                     terminal_value,
                 ))
+        }) {
+            Ok(rows) => rows,
+            Err(_) => return None,
+        };
+
+        let rows: Vec<_> = query_result
+            .filter_map(|r| match r {
+                Ok(row) => Some(row),
+                Err(_) => None,
             })
-            .ok()?
-            .filter_map(|r| r.ok())
             .collect();
 
         if rows.is_empty() {
             return None;
         }
 
-        let mut nodes = std::collections::HashMap::new();
-        let mut max_id: u64 = 0;
+        let (nodes, max_id) = rows.into_iter().fold(
+            (std::collections::HashMap::new(), 0u64),
+            |(mut nodes, max_id), (id, parent_id, move_uci, node_type_str, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value)| {
+                let node_type = match node_type_str.as_str() {
+                    "Chance" => crate::search::NodeType::Chance,
+                    _ => crate::search::NodeType::Max,
+                };
+                let children: Vec<u64> = match children_json {
+                    Some(j) => match serde_json::from_str(&j) {
+                        Ok(c) => c,
+                        Err(_) => Vec::new(),
+                    },
+                    None => Vec::new(),
+                };
 
-        for (id, parent_id, move_uci, node_type_str, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value) in rows {
-            let node_type = match node_type_str.as_str() {
-                "Chance" => crate::search::NodeType::Chance,
-                _ => crate::search::NodeType::Max,
-            };
-            let children: Vec<u64> = children_json
-                .and_then(|j| serde_json::from_str(&j).ok())
-                .unwrap_or_default();
+                let mut node = crate::search::Node::new(
+                    id, parent_id, move_uci, node_type, epd, move_sequence,
+                );
+                node.visit_count = visit_count;
+                node.total_value = total_value;
+                node.prior = prior;
+                node.children = children;
+                node.expanded = expanded;
+                node.terminal_value = terminal_value;
 
-            let mut node = crate::search::Node::new(
-                id, parent_id, move_uci, node_type, epd, move_sequence,
-            );
-            node.visit_count = visit_count;
-            node.total_value = total_value;
-            node.prior = prior;
-            node.children = children;
-            node.expanded = expanded;
-            node.terminal_value = terminal_value;
-
-            max_id = max_id.max(id);
-            nodes.insert(id, node);
-        }
+                nodes.insert(id, node);
+                (nodes, max_id.max(id))
+            },
+        );
 
         Some(crate::search::SearchTree::from_nodes(nodes, 0, max_id + 1))
     }

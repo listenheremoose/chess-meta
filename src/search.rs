@@ -200,42 +200,42 @@ fn select_puct(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
 
     let parent_q = node.q_value();
 
-    let mut best_score = f64::NEG_INFINITY;
-    let mut best_child = node.children[0];
+    let best_scored = node.children
+        .iter()
+        .map(|&child_id| {
+            let child = &tree.nodes[&child_id];
+            let child_visits = child.visit_count as f64;
 
-    for &child_id in &node.children {
-        let child = &tree.nodes[&child_id];
-        let child_visits = child.visit_count as f64;
-
-        // Q value from side-to-move perspective
-        let q = if child.visit_count == 0 {
-            // FPU: Q_fpu = Q_parent_stm - fpu_reduction
-            // parent_q is White's perspective; convert to side-to-move first
-            let parent_q_stm = if is_white_turn { parent_q } else { 1.0 - parent_q };
-            parent_q_stm - config.fpu_reduction
-        } else {
-            let q_white = child.q_value();
-            if is_white_turn {
-                q_white
+            // Q value from side-to-move perspective
+            let q = if child.visit_count == 0 {
+                // FPU: Q_fpu = Q_parent_stm - fpu_reduction
+                // parent_q is White's perspective; convert to side-to-move first
+                let parent_q_stm = if is_white_turn { parent_q } else { 1.0 - parent_q };
+                parent_q_stm - config.fpu_reduction
             } else {
-                1.0 - q_white
-            }
-        };
+                let q_white = child.q_value();
+                if is_white_turn { q_white } else { 1.0 - q_white }
+            };
 
-        // U = C(s) * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
-        let u = cpuct * child.prior * parent_visits.sqrt() / (1.0 + child_visits);
+            // U = C(s) * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+            let u = cpuct * child.prior * parent_visits.sqrt() / (1.0 + child_visits);
 
-        let score = q + u;
-        #[cfg(feature = "search-trace")]
-        log::trace!("puct child={child_id} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child.prior);
-        if score > best_score {
-            best_score = score;
-            best_child = child_id;
-        }
-    }
+            let score = q + u;
+            #[cfg(feature = "search-trace")]
+            log::trace!("puct child={child_id} q={q:.4} u={u:.4} score={score:.4} prior={:.4} visits={child_visits}", child.prior);
+            (child_id, score)
+        })
+        .reduce(|(id_a, score_a), (id_b, score_b)| {
+            if score_b > score_a { (id_b, score_b) } else { (id_a, score_a) }
+        });
+
+    let best_child = match best_scored {
+        Some((id, _)) => id,
+        None => node.children[0],
+    };
 
     #[cfg(feature = "search-trace")]
-    log::trace!("puct selected={best_child} score={best_score:.4}");
+    log::trace!("puct selected={best_child}");
 
     best_child
 }
@@ -259,38 +259,34 @@ fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
     // Step 2: Apply temperature (before floor, per docs)
     if (config.maia_temperature - 1.0).abs() > 1e-6 {
         let inv_t = 1.0 / config.maia_temperature;
-        for p in &mut probs {
-            *p = p.powf(inv_t);
-        }
+        probs.iter_mut().for_each(|p| *p = p.powf(inv_t));
     }
 
     // Step 3: Apply exploration floor (after temperature, guarantees minimum probability)
-    for p in &mut probs {
-        *p = p.max(config.maia_floor);
-    }
+    probs.iter_mut().for_each(|p| *p = p.max(config.maia_floor));
 
     // Normalize
     let sum: f64 = probs.iter().sum();
     if sum <= 0.0 {
         return children[0];
     }
-    for p in &mut probs {
-        *p /= sum;
-    }
+    probs.iter_mut().for_each(|p| *p /= sum);
 
     // Sample
     let r: f64 = rand::random();
-    let mut cumulative = 0.0;
-    for (i, &prob) in probs.iter().enumerate() {
-        cumulative += prob;
-        if r < cumulative {
-            #[cfg(feature = "search-trace")]
-            log::trace!("chance sampled child={} prob={prob:.4}", children[i]);
-            return children[i];
-        }
-    }
+    let found = probs
+        .iter()
+        .scan(0.0, |cumulative, &prob| {
+            *cumulative += prob;
+            Some(*cumulative)
+        })
+        .enumerate()
+        .find(|(_, cumulative)| r < *cumulative);
 
-    *children.last().unwrap()
+    match found {
+        Some((i, _)) => children[i],
+        None => *children.last().unwrap(),
+    }
 }
 
 /// Backpropagate a value (from White's perspective) up the tree.
@@ -315,7 +311,10 @@ pub fn candidate_moves_max(
 ) -> Vec<(String, f64)> {
     // Top N engine moves by policy (NN's prior for move strength)
     let mut engine_sorted: Vec<_> = engine_policy.iter().collect();
-    engine_sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+    engine_sorted.sort_by(|a, b| match b.1.partial_cmp(a.1) {
+        Some(ord) => ord,
+        None => std::cmp::Ordering::Equal,
+    });
     let engine_top: Vec<&String> = engine_sorted
         .iter()
         .take(config.engine_top_n)
@@ -324,7 +323,10 @@ pub fn candidate_moves_max(
 
     // Top N Maia moves by policy
     let mut maia_sorted: Vec<_> = maia_policy.iter().collect();
-    maia_sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+    maia_sorted.sort_by(|a, b| match b.1.partial_cmp(a.1) {
+        Some(ord) => ord,
+        None => std::cmp::Ordering::Equal,
+    });
     let maia_top: Vec<&String> = maia_sorted
         .iter()
         .take(config.maia_top_n)
@@ -333,27 +335,30 @@ pub fn candidate_moves_max(
 
     // Deduplicate
     let mut seen = HashSet::new();
-    let mut candidates = Vec::new();
+    let mut candidates: Vec<(String, f64)> = engine_top
+        .iter()
+        .chain(maia_top.iter())
+        .filter(|uci| seen.insert(uci.to_string()))
+        .map(|uci| {
+            let engine_p = match lookup_castling_aware(uci, engine_policy) {
+                Some(v) => v,
+                None => 0.0,
+            } as f64 / 100.0;
+            let maia_p = match lookup_castling_aware(uci, maia_policy) {
+                Some(v) => v,
+                None => 0.0,
+            } as f64 / 100.0;
 
-    for uci in engine_top.iter().chain(maia_top.iter()) {
-        if !seen.insert((*uci).clone()) {
-            continue;
-        }
-
-        let engine_p = lookup_castling_aware(uci, engine_policy).unwrap_or(0.0) as f64 / 100.0;
-        let maia_p = lookup_castling_aware(uci, maia_policy).unwrap_or(0.0) as f64 / 100.0;
-
-        // Blended prior: alpha * engine + (1 - alpha) * maia
-        let blended = config.alpha * engine_p + (1.0 - config.alpha) * maia_p;
-        candidates.push(((*uci).clone(), blended));
-    }
+            // Blended prior: alpha * engine + (1 - alpha) * maia
+            let blended = config.alpha * engine_p + (1.0 - config.alpha) * maia_p;
+            ((*uci).clone(), blended)
+        })
+        .collect();
 
     // Normalize priors so they sum to 1
     let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
     if sum > 0.0 {
-        for (_, p) in &mut candidates {
-            *p /= sum;
-        }
+        candidates.iter_mut().for_each(|(_, p)| *p /= sum);
     }
 
     candidates
@@ -374,9 +379,7 @@ pub fn candidate_moves_chance(
     // Normalize
     let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
     if sum > 0.0 {
-        for (_, p) in &mut candidates {
-            *p /= sum;
-        }
+        candidates.iter_mut().for_each(|(_, p)| *p /= sum);
     }
 
     candidates
@@ -398,10 +401,10 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
 
     // Position-level engine value (from WDL) in side-to-move perspective [0, 1].
     // Used for delta: how much does our practical Q differ from the engine's position eval?
-    let engine_position_value = root.wdl.map(|(w, d, _l)| {
-        // WDL stored as-is from lc0 (side-to-move perspective)
-        w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0
-    });
+    let engine_position_value = match root.wdl {
+        Some((w, d, _l)) => Some(w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0),
+        None => None,
+    };
 
     let mut move_infos: Vec<RootMoveInfo> = root
         .children
@@ -414,9 +417,13 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
             let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
             // Engine policy percentage for this move
-            let engine_pol = root.engine_policy.as_ref().and_then(|pol| {
-                lookup_castling_aware(&uci, pol).map(|p| p as f64)
-            });
+            let engine_pol = match root.engine_policy.as_ref() {
+                Some(pol) => match lookup_castling_aware(&uci, pol) {
+                    Some(p) => Some(p as f64),
+                    None => None,
+                },
+                None => None,
+            };
 
             let worst_case = if visits > 0 {
                 worst_case_value(tree, child_id, is_white)
@@ -427,7 +434,10 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
 
             // Delta: how much does our practical Q differ from the position's engine eval?
             // Positive delta = move performs better against humans than the engine expects.
-            let delta = engine_position_value.map(|ev| practical_q - ev);
+            let delta = match engine_position_value {
+                Some(ev) => Some(practical_q - ev),
+                None => None,
+            };
 
             Some(RootMoveInfo {
                 uci_move: uci,
@@ -443,10 +453,9 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
         })
         .collect();
 
-    move_infos.sort_by(|a, b| {
-        b.practical_q
-            .partial_cmp(&a.practical_q)
-            .unwrap_or(std::cmp::Ordering::Equal)
+    move_infos.sort_by(|a, b| match b.practical_q.partial_cmp(&a.practical_q) {
+        Some(ord) => ord,
+        None => std::cmp::Ordering::Equal,
     });
 
     move_infos
@@ -478,27 +487,27 @@ fn worst_case_value(tree: &SearchTree, node_id: u64, is_white: bool) -> f64 {
     }
 
     // Worst-case among opponent responses with >10% Maia probability (prior > 0.10)
-    let mut worst = f64::MAX;
-    let mut any_visited = false;
-
-    for &child_id in &node.children {
-        let child = &tree.nodes[&child_id];
-        if child.visit_count > 0 && child.prior > 0.10 {
-            any_visited = true;
-            let child_q_stm = if is_white {
-                child.q_value()
+    let qualifying_children = node.children
+        .iter()
+        .filter_map(|&child_id| {
+            let child = &tree.nodes[&child_id];
+            if child.visit_count > 0 && child.prior > 0.10 {
+                let child_q_stm = if is_white { child.q_value() } else { 1.0 - child.q_value() };
+                Some(child_q_stm)
             } else {
-                1.0 - child.q_value()
-            };
-            worst = worst.min(child_q_stm);
-        }
-    }
+                None
+            }
+        });
 
-    if any_visited {
-        worst
-    } else {
-        let q = node.q_value();
-        if is_white { q } else { 1.0 - q }
+    match qualifying_children.fold(None, |acc: Option<f64>, q| Some(match acc {
+        Some(prev) => prev.min(q),
+        None => q,
+    })) {
+        Some(worst) => worst,
+        None => {
+            let q = node.q_value();
+            if is_white { q } else { 1.0 - q }
+        }
     }
 }
 
