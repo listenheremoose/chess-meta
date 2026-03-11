@@ -18,7 +18,8 @@ Always use iterator chains, never `for` loops:
 
 ```rust
 // Yes
-let white_pieces = pieces.iter()
+let white_pieces = pieces
+    .iter()
     .filter(|piece| piece.color == Color::White)
     .collect::<Vec<_>>();
 
@@ -55,10 +56,15 @@ Prefer point-free style where possible. When closures are needed, use descriptiv
 
 ```rust
 // Best — point-free method reference
-pieces.iter().filter(Piece::is_white).map(Piece::name)
+pieces
+    .iter()
+    .filter(Piece::is_white)
+    .map(Piece::name)
 
 // OK — closure with descriptive name when logic requires it
-pieces.iter().filter(|piece| piece.color == Color::White)
+pieces
+    .iter()
+    .filter(|piece| piece.color == Color::White)
 ```
 
 ## Fold and Accumulation
@@ -67,15 +73,18 @@ Use specialized methods (`sum`, `count`, `any`, `all`) when available. Use `fold
 
 ```rust
 // Specialized
-let score: i32 = pieces.iter()
+let score: i32 = pieces
+    .iter()
     .map(Piece::value)
     .sum();
 
-let king_present = pieces.iter()
+let king_present = pieces
+    .iter()
     .any(|piece| piece.kind == King);
 
 // Custom accumulation with fold
-let material_balance = pieces.iter()
+let material_balance = pieces
+    .iter()
     .fold(0, |accumulator, piece| match piece.color {
         Color::White => accumulator + piece.value(),
         Color::Black => accumulator - piece.value(),
@@ -96,7 +105,8 @@ let mut turn = Color::White;  // only when mutation is needed
 Break into named intermediate variables after 3-4 steps:
 
 ```rust
-let my_pieces = board.squares()
+let my_pieces = board
+    .squares()
     .filter(Square::has_piece)
     .filter(|square| square.piece().color == turn);
 

@@ -1,6 +1,6 @@
 ---
 name: Code Style
-description: Rust code style conventions for the project
+description: Formatting and syntax conventions
 globs: src/**/*.rs
 ---
 
@@ -12,6 +12,14 @@ Use granular imports — import specific items, no wildcards:
 
 ```rust
 use iced::widget::{button, column, row, text};
+```
+
+## Enum Variant Imports
+
+Import specific variants, no wildcards:
+
+```rust
+use PieceKind::{King, Queen, Rook, Bishop, Knight, Pawn};
 ```
 
 ## String Formatting
@@ -44,37 +52,60 @@ column![board, menu]
     .align_x(Center)
 ```
 
-## Type Annotations
+## Method Chaining Newlines
 
-### Local Variables
-
-Annotate only when the type isn't obvious from the right-hand side:
+First method on a new line:
 
 ```rust
-let selected: Option<(usize, usize)> = None;  // annotate — not obvious
-let count = pieces.len();                       // skip — clearly usize
+pieces
+    .iter()
+    .filter(Piece::is_white)
+    .count()
 ```
 
-### Closures
+## Return Expressions
 
-Let the compiler infer:
+Implicit return — no `return` keyword, no trailing semicolon:
 
 ```rust
-let white_piece = |piece| piece.color == Color::White;
+fn piece_value(kind: PieceKind) -> i32 {
+    match kind {
+        Pawn => 100,
+        Knight => 300,
+        Bishop => 300,
+        Rook => 500,
+        Queen => 900,
+        King => 0,
+    }
+}
 ```
 
-### Collect / Turbofish
+## Trailing Commas
 
-Use turbofish on the method:
+Always use trailing commas in multi-line constructs.
+
+## Blank Lines
+
+Blank line between every function/impl item.
+
+## Generics
+
+Always use where clauses on separate lines:
 
 ```rust
-let moves = legal_moves.collect::<Vec<Move>>();
+fn process<T>(item: T) -> Result<T>
+where
+    T: Clone + Debug,
+{
+    // ...
+}
 ```
 
-### Complex Types
+## Nested Function Calls
 
-Use named types / type aliases for complex types:
+Extract to variables when nesting more than 2 levels:
 
 ```rust
-type Board = [[Option<Piece>; 8]; 8];
+let action = state.menu.update(message);
+handle_menu_action(action, &mut state.game);
 ```

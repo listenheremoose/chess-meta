@@ -81,12 +81,13 @@ Route messages to components. Components receive `&mut` to shared state as neede
 fn update(state: &mut ChessMeta, message: Message) {
     match message {
         Message::Board(message) => state.board_ui.update(message, &mut state.game),
-        Message::Menu(message) => handle_menu_action(state.menu.update(message), &mut state.game),
+        Message::Menu(message) => handle_menu_update(message, &mut state.menu, &mut state.game),
         Message::Engine(message) => state.engine.update(message),
     }
 }
 
-fn handle_menu_action(action: Option<MenuAction>, game: &mut Game) {
+fn handle_menu_update(message: MenuMessage, menu: &mut Menu, game: &mut Game) {
+    let action = menu.update(message);
     match action {
         Some(MenuAction::NewGame) => game.reset(),
         None => {}
