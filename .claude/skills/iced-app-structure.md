@@ -1,6 +1,7 @@
 ---
 name: Iced App Structure
 description: Entry point, window config, state management, messaging, and styling patterns for the Iced 0.14 application
+user_invocable: true
 globs: src/**/*.rs
 ---
 

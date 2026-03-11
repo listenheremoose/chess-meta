@@ -1,6 +1,7 @@
 ---
 name: Code Organization
 description: Function length, file length, comments, and iteration
+user_invocable: true
 globs: src/**/*.rs
 ---
 

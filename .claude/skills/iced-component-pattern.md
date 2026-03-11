@@ -1,6 +1,7 @@
 ---
 name: Iced Component Pattern
 description: Template and checklist for creating UI panels in Iced 0.14
+user_invocable: true
 globs: src/ui/**/*.rs
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: Functional Patterns
 description: Functional programming conventions and iterator usage
+user_invocable: true
 globs: src/**/*.rs
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: Dependencies
 description: Policy on adding and managing crate dependencies
+user_invocable: true
 globs: Cargo.toml
 ---
 

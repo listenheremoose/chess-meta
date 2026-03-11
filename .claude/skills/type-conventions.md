@@ -1,6 +1,7 @@
 ---
 name: Type Conventions
 description: Type annotations, aliases, derives, and visibility
+user_invocable: true
 globs: src/**/*.rs
 ---
 

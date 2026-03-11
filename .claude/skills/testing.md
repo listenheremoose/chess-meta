@@ -1,6 +1,7 @@
 ---
 name: Testing
 description: Test conventions, structure, and coverage strategy
+user_invocable: true
 globs: src/**/*.rs, tests/**/*.rs
 ---
 

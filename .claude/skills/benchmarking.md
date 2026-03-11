@@ -1,6 +1,7 @@
 ---
 name: Benchmarking
 description: Benchmark conventions and regression tracking
+user_invocable: true
 globs: benches/**/*.rs
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: Code Style
 description: Formatting and syntax conventions
+user_invocable: true
 globs: src/**/*.rs
 ---
 

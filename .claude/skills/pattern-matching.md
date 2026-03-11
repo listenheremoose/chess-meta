@@ -1,6 +1,7 @@
 ---
 name: Pattern Matching
 description: Pattern matching conventions and preferences
+user_invocable: true
 globs: src/**/*.rs
 ---
 

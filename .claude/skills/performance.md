@@ -1,6 +1,7 @@
 ---
 name: Performance
 description: Performance conventions for MCTS analysis
+user_invocable: true
 globs: src/**/*.rs
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: Naming Conventions
 description: Variable, function, and type naming style
+user_invocable: true
 globs: src/**/*.rs
 ---
 

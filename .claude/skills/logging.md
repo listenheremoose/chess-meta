@@ -1,6 +1,7 @@
 ---
 name: Logging
 description: Logging conventions and output strategy
+user_invocable: true
 globs: src/**/*.rs
 ---
 

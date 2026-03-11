@@ -1,6 +1,7 @@
 ---
 name: Error Handling
 description: Error types, propagation, and panic policy
+user_invocable: true
 globs: src/**/*.rs
 ---
 
