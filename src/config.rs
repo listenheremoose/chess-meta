@@ -5,12 +5,10 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    // ── Engine paths ────────────────────────────────────────────────────
     pub lc0_path: String,
     pub engine_weights_path: String,
     pub maia_weights_path: String,
 
-    // ── PUCT / Exploration ──────────────────────────────────────────────
     pub cpuct_init: f64,
     pub cpuct_base: f64,
     pub cpuct_factor: f64,
@@ -18,30 +16,23 @@ pub struct Config {
     /// Prior blend: alpha * engine_policy + (1-alpha) * maia_policy
     pub alpha: f64,
 
-    // ── Maia / Opponent modeling ────────────────────────────────────────
     pub maia_temperature: f64,
     pub maia_floor: f64,
     pub maia_min_prob: f64,
 
-    // ── Evaluation ─────────────────────────────────────────────────────
     pub engine_nodes: u64,
     pub contempt: f64,
 
-    // ── Final move selection ───────────────────────────────────────────
     pub safety: f64,
 
-    // ── Search budget ──────────────────────────────────────────────────
     pub max_nodes: u64,
 
-    // ── Candidate selection ────────────────────────────────────────────
     pub engine_top_n: usize,
     pub maia_top_n: usize,
 
-    // ── lc0 process management ─────────────────────────────────────────
     pub nn_cache_size_mb: u32,
     pub ucinewgame_interval: u32,
 
-    // ── Persistence ────────────────────────────────────────────────────
     pub flush_interval: u32,
 }
 
@@ -124,8 +115,6 @@ impl Config {
 mod tests {
     use super::Config;
 
-    // -- Default Values --
-
     #[test]
     fn defaults_match_documented_parameters() {
         let config = Config::default();
@@ -146,8 +135,6 @@ mod tests {
         assert_eq!(config.nn_cache_size_mb, 512);
         assert_eq!(config.ucinewgame_interval, 500);
     }
-
-    // -- Engine Path Validation --
 
     #[test]
     fn engine_paths_configured_returns_false_when_empty() {
@@ -171,8 +158,6 @@ mod tests {
         // engine_weights_path and maia_weights_path still empty
         assert!(!config.engine_paths_configured());
     }
-
-    // -- Serialization --
 
     #[test]
     fn config_roundtrips_through_toml() {

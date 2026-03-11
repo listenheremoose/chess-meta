@@ -29,7 +29,7 @@ impl std::fmt::Display for MaiaError {
 
 impl std::error::Error for MaiaError {}
 
-/// Persistent lc0 process running Maia weights for human-play prediction.
+/// Persistent lc0 process running Maia weights.
 pub struct MaiaEngine {
     child: Child,
     stdin: ChildStdin,

@@ -106,8 +106,6 @@ impl Cache {
         Ok(Self { conn })
     }
 
-    // ── Engine cache (EPD-keyed) ────────────────────────────────────────
-
     pub fn get_engine_eval(
         &self,
         epd: &str,
@@ -161,8 +159,6 @@ impl Cache {
         Ok(())
     }
 
-    // ── Maia cache (move-sequence-keyed) ────────────────────────────────
-
     pub fn get_maia_policy(&self, move_sequence: &str) -> Option<HashMap<String, f32>> {
         let mut stmt = match self.conn.prepare(
             "SELECT policy_json FROM maia_cache WHERE move_sequence = ?1",
@@ -199,8 +195,6 @@ impl Cache {
             .map_err(CacheError::QueryFailed)?;
         Ok(())
     }
-
-    // ── Tree persistence ────────────────────────────────────────────────
 
     /// Save an entire search tree to the database in a single transaction.
     pub fn save_tree(
@@ -438,8 +432,6 @@ mod tests {
         Cache { conn }
     }
 
-    // -- Engine Cache --
-
     #[test]
     fn engine_cache_miss_returns_none() {
         let cache = test_cache();
@@ -477,8 +469,6 @@ mod tests {
         let (w, d, l, _, _) = cache.get_engine_eval(epd).unwrap();
         assert_eq!((w, d, l), (300, 400, 300));
     }
-
-    // -- Maia Cache --
 
     #[test]
     fn maia_cache_miss_returns_none() {

@@ -152,16 +152,12 @@ mod tests {
         pos.chess.is_game_over()
     }
 
-    // -- Startpos --
-
     #[test]
     fn startpos_produces_initial_epd() {
         let pos = PositionState::startpos();
         assert!(pos.epd.contains("rnbqkbnr"));
         assert!(pos.move_sequence.is_empty());
     }
-
-    // -- from_moves --
 
     #[test]
     fn from_moves_empty_returns_startpos() {
@@ -189,8 +185,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- apply_uci --
-
     #[test]
     fn apply_uci_updates_sequence_and_turn() {
         let pos = PositionState::startpos();
@@ -214,8 +208,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- Terminal detection --
-
     #[test]
     fn terminal_checkmate_returns_winner_value() {
         // Scholar's mate — White wins
@@ -230,8 +222,6 @@ mod tests {
         assert!(!is_game_over(&pos));
         assert_eq!(pos.terminal_value(), None);
     }
-
-    // -- EPD transposition safety --
 
     #[test]
     fn same_position_different_move_order_same_epd() {

@@ -20,7 +20,10 @@
       "Bash(grep -A5 \"pub fn title\\\\b\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
       "Bash(grep -A10 \"pub trait TitleFn\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
       "Bash(cargo test:*)",
-      "Read(//c/Users/me/.claude/projects/c--code-chess-meta/memory/**)"
+      "Read(//c/Users/me/.claude/projects/c--code-chess-meta/memory/**)",
+      "Bash(find /c/code/chess-meta/tests -name *.rs)",
+      "Bash(mkdir -p /c/code/chess-meta/src/search)",
+      "Bash(mkdir -p /c/code/chess-meta/src/coordinator)"
     ]
   }
 }

@@ -325,8 +325,6 @@ mod tests {
         parse_wdl, EngineEval,
     };
 
-    // -- UCI Output Parsing --
-
     #[test]
     fn verbose_stats_extracts_move_policy_and_q() {
         let line = "info string d2d4  (293 ) N:    7934 (+18) (P: 12.71%) (WL:  0.05704) (D: 0.745) (M: 197.1) (Q:  0.05704) (U: 0.00749) (S:  0.06484) (V:  0.0303)";
@@ -366,8 +364,6 @@ mod tests {
         assert_eq!(parse_wdl(line), None);
     }
 
-    // -- Position Command --
-
     #[test]
     fn format_position_empty_returns_startpos() {
         assert_eq!(format_position_cmd(""), "position startpos");
@@ -380,8 +376,6 @@ mod tests {
             "position startpos moves e2e4 e7e5"
         );
     }
-
-    // -- Castling Notation --
 
     #[test]
     fn castle_maps_king_destination_to_king_rook() {
@@ -411,8 +405,6 @@ mod tests {
         map.insert("e1h1".to_string(), 0.5f32); // King-rook
         assert_eq!(lookup_castling_aware("e1g1", &map), Some(0.7));
     }
-
-    // -- Value Computation --
 
     #[test]
     fn value_white_applies_contempt_to_draws() {
