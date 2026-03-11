@@ -1,0 +1,137 @@
+use iced::widget::{container, row, scrollable, text, Column};
+use iced::{Element, Length};
+
+use crate::app::Message;
+use crate::search::RootMoveInfo;
+use crate::ui::colors;
+
+/// Left panel: move comparison table with candidate moves.
+pub fn view<'a>(
+    moves: &'a [RootMoveInfo],
+    selected_move: Option<&str>,
+) -> Element<'a, Message> {
+    let header = row![
+        text("Move").width(Length::FillPortion(2)).size(13),
+        text("Eng Q").width(Length::FillPortion(2)).size(13),
+        text("Pract Q").width(Length::FillPortion(2)).size(13),
+        text("Delta").width(Length::FillPortion(2)).size(13),
+        text("Visits").width(Length::FillPortion(2)).size(13),
+    ]
+    .spacing(4)
+    .padding(4);
+
+    let mut rows: Vec<Element<'a, Message>> = vec![header.into()];
+
+    for info in moves {
+        let is_selected = selected_move == Some(&info.uci_move);
+
+        let engine_q_str = info
+            .engine_q
+            .map(|q| format!("{:.3}", q))
+            .unwrap_or_else(|| "-".to_string());
+
+        let delta_str = info
+            .delta
+            .map(|d| format!("{:+.3}", d))
+            .unwrap_or_else(|| "-".to_string());
+
+        let delta_color = info.delta.map(|d| {
+            if d > 0.01 {
+                colors::GREEN
+            } else if d < -0.01 {
+                colors::RED
+            } else {
+                colors::TEXT_DIM
+            }
+        });
+
+        let move_row = row![
+            text(&info.uci_move).width(Length::FillPortion(2)).size(13),
+            text(engine_q_str).width(Length::FillPortion(2)).size(13),
+            text(format!("{:.3}", info.practical_q))
+                .width(Length::FillPortion(2))
+                .size(13),
+            text(delta_str)
+                .width(Length::FillPortion(2))
+                .size(13)
+                .color(delta_color.unwrap_or(colors::TEXT)),
+            text(format!("{}", info.visits))
+                .width(Length::FillPortion(2))
+                .size(13),
+        ]
+        .spacing(4)
+        .padding(4);
+
+        rows.push(
+            container(move_row)
+                .style(move |_theme: &iced::Theme| {
+                    if is_selected {
+                        container::Style {
+                            background: Some(iced::Background::Color(colors::SURFACE)),
+                            ..Default::default()
+                        }
+                    } else {
+                        container::Style::default()
+                    }
+                })
+                .into(),
+        );
+
+        // Detail view for selected move
+        if is_selected {
+            if let Some(detail) = move_detail(info) {
+                rows.push(detail);
+            }
+        }
+    }
+
+    let content = Column::with_children(rows).spacing(2);
+
+    container(scrollable(content))
+        .padding(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Detail panel for a selected move.
+fn move_detail<'a>(info: &RootMoveInfo) -> Option<Element<'a, Message>> {
+    let mut details = Vec::new();
+
+    details.push(
+        text(format!("Q (White): {:.4}", info.q_white))
+            .size(12)
+            .into(),
+    );
+    details.push(
+        text(format!("Worst-case: {:.4}", info.worst_case))
+            .size(12)
+            .into(),
+    );
+
+    if let Some((w, d, l)) = info.wdl {
+        let total = (w + d + l) as f64;
+        if total > 0.0 {
+            let wdl_str = format!(
+                "WDL: {:.1}% / {:.1}% / {:.1}%",
+                w as f64 / total * 100.0,
+                d as f64 / total * 100.0,
+                l as f64 / total * 100.0,
+            );
+            details.push(text(wdl_str).size(12).into());
+        }
+    }
+
+    let detail_col = Column::with_children(details)
+        .spacing(2)
+        .padding(4);
+
+    Some(
+        container(detail_col)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(iced::Background::Color(colors::SURFACE)),
+                ..Default::default()
+            })
+            .into(),
+    )
+}

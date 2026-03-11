@@ -1,61 +1,106 @@
 ---
 name: Iced Component Pattern
-description: Template and checklist for creating new Iced UI components
-globs: src/**/*.rs
+description: Template and checklist for creating UI panels in Iced 0.14
+globs: src/ui/**/*.rs
 ---
 
 # Iced Component Pattern
 
-When creating a new component, follow this template. Each component lives in its own file under `src/` or `src/ui/`.
+UI panels are implemented as free functions in modules under `src/ui/`. Each module file corresponds to one panel.
 
-## Template
+## Template — Simple Panel (widgets only)
 
-Components only hold UI-specific state. Shared domain state (like `SearchState`) is passed in via `update` and `view` parameters.
+For panels that just render widgets (controls, move table):
 
 ```rust
-use iced::widget::text;
+// src/ui/foo.rs
+use iced::widget::{column, text};
 use iced::Element;
 
-#[derive(Debug, Clone)]
-pub enum FooMessage {
-    // Component-specific messages
-}
+use crate::app::Message;
 
-// Optional: define actions for cross-component side effects
-pub enum FooAction {
-    // Actions the parent should handle
+pub fn view<'a>(data: &'a SomeData, selected: Option<&str>) -> Element<'a, Message> {
+    column![
+        text("Header"),
+        // ... build widgets from data ...
+    ]
+    .into()
 }
+```
+
+## Template — Canvas Panel (custom drawing)
+
+For panels that use custom canvas rendering (tree view, progress strip):
+
+```rust
+// src/ui/bar.rs
+use iced::widget::canvas::{self, Canvas, Geometry, Path, Text};
+use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
+
+use crate::app::Message;
 
 #[derive(Default)]
-pub struct Foo {
-    // UI-specific state only (not domain data)
+pub struct BarState {
+    cache: canvas::Cache,
 }
 
-impl Foo {
-    // Accept &mut SearchState (or other shared state) if the component needs to read/write it
-    pub fn update(&mut self, message: FooMessage) -> Option<FooAction> {
-        match message {
-            // Handle messages, return Some(action) for cross-component effects
-        }
-        None
+impl BarState {
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
     }
+}
 
-    // Accept &SearchState (or other shared state) if the component needs to display it
-    pub fn view(&self) -> Element<'_, FooMessage> {
-        text("Foo").into()
+pub fn view<'a>(
+    data: Option<&SomeSnapshot>,
+    state: &'a BarState,
+) -> Element<'a, Message> {
+    let data_clone = data.cloned();
+    Canvas::new(BarProgram {
+        data: data_clone,
+        cache: &state.cache,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+struct BarProgram<'a> {
+    data: Option<SomeSnapshot>,
+    cache: &'a canvas::Cache,
+}
+
+impl<'a> canvas::Program<Message> for BarProgram<'a> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            // ... custom drawing ...
+        });
+        vec![geometry]
     }
 }
 ```
 
 ## Wiring into the app
 
-1. Add `mod foo;` to the appropriate parent module (e.g., `ui/mod.rs` for UI components)
-2. Add `use foo::{Foo, FooMessage};` import
-3. Add `foo: Foo` field to `ChessMeta`
-4. Add `Foo(FooMessage)` variant to `Message`
-5. Add routing arm in `update()` — pass `&mut state.search` if needed, handle returned actions
-6. Add `state.foo.view().map(Message::Foo)` in `view()` — pass `&state.search` if needed
+1. Add `pub mod foo;` to `src/ui/mod.rs`
+2. Call `foo::view(...)` in `App::view()`, passing data by reference
+3. For canvas panels: add the state struct as a field on `App`, call `.clear_cache()` when data updates
+
+## Key conventions
+
+- View functions accept `&'a` references to data and return `Element<'a, Message>`
+- All messages flow through the single top-level `Message` enum
+- Canvas state structs own a `canvas::Cache` and expose `clear_cache()`
+- Clone snapshot data into canvas programs (they can't borrow across the draw boundary)
 
 ## Rust 2024 edition note
 
-Always use explicit `'_` lifetime in view return types: `Element<'_, FooMessage>` not `Element<FooMessage>`.
+Always use explicit `'_` lifetime in return types: `Element<'_, Message>` not `Element<Message>`.

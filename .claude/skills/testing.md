@@ -1,14 +1,15 @@
 ---
 name: Testing
 description: Test conventions, structure, and coverage strategy
-globs: tests/**/*.rs
+globs: src/**/*.rs, tests/**/*.rs
 ---
 
 # Testing
 
 ## Test Location
 
-All tests live in the `tests/` directory — no inline `#[cfg(test)]` modules.
+- **Unit tests** — inline `#[cfg(test)] mod tests` in the same file as the code under test. This is the standard Rust convention and keeps tests close to the implementation.
+- **Integration tests** — `tests/` directory for tests that exercise multiple modules together or need to set up complex scenarios.
 
 ## Test Naming
 
@@ -25,6 +26,12 @@ fn chance_node_samples_from_maia_distribution() { ... }
 ## Assertions
 
 Standard library only — `assert!`, `assert_eq!`, `assert_ne!`. No assertion crates.
+
+For floating-point comparisons, use an epsilon check:
+
+```rust
+assert!((actual - expected).abs() < 0.001);
+```
 
 ## Test Setup
 
@@ -43,10 +50,7 @@ let tree = TreeBuilder::new()
 Use move sequences for test positions (matching the app's internal representation):
 
 ```rust
-// Yes
-let position = position_from_moves(&["e2e4", "e7e5", "g1f3"]);
-
-// Avoid raw FEN in tests unless testing FEN-specific functionality
+let position = PositionState::from_moves("e2e4 e7e5 g1f3").unwrap();
 ```
 
 ## Test Ordering
@@ -73,8 +77,8 @@ fn puct_balances_exploration_and_exploitation() { ... }
 
 Test at all levels:
 
-- **Unit tests** — core logic: PUCT selection, Maia sampling, backpropagation, value conversion
-- **Integration tests** — full MCTS iteration cycles, UCI parse → evaluate → backprop flows
+- **Unit tests** — core logic: PUCT selection, Maia sampling, backpropagation, value conversion, UCI parsing
+- **Integration tests** — full MCTS iteration cycles, UCI parse -> evaluate -> backprop flows
 - **Snapshot tests** — use `insta` to capture tree state, move rankings, and search progress; commit `.snap` files to version control
 
 ## Coverage

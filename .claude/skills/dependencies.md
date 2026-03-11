@@ -19,15 +19,22 @@ Before adding a crate, it must be:
 
 ## Approved Dependencies
 
-- `iced` — UI framework
+- `iced` — UI framework (features: `canvas`, `tokio`)
 - `shakmaty` — chess position logic, move generation, game-over detection
 - `rusqlite` — SQLite for caching engine evals, Maia policies, and MCTS tree persistence
 - `serde` + `serde_json` — serialization for cache storage and config
 - `rand` — weighted random sampling for Maia distributions at CHANCE nodes
+- `toml` — config file parsing/writing
+- `dirs` — platform-standard config/data directory paths
+- `log` + `simplelog` — structured logging
 - `criterion` — benchmarking (dev-dependency)
 - `insta` — snapshot testing (dev-dependency)
 
 All other dependencies require explicit justification.
+
+## Iced Feature Flags
+
+The `tokio` feature is required for `iced::time::every` (used for periodic search polling). The `canvas` feature is required for the tree view and progress strip.
 
 ## Dependency Updates
 

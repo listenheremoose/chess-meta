@@ -25,10 +25,10 @@ use SearchStatus::{Idle, Running, Paused};
 
 ## String Formatting
 
-Prefer inline format strings and `text!` macro:
+Prefer inline format strings with `format!()` and `text()`:
 
 ```rust
-text!("Iterations: {iteration_count}")
+text(format!("Iterations: {iteration_count}"))
 ```
 
 ## Match Arms

@@ -1,0 +1,201 @@
+use iced::mouse;
+use iced::widget::canvas::{self, Canvas, Geometry, Path, Stroke, Text};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+
+use crate::app::Message;
+use crate::coordinator::TreeSnapshot;
+use crate::search::NodeType;
+use crate::ui::colors;
+
+/// State for the tree view canvas.
+#[derive(Default)]
+pub struct TreeViewState {
+    cache: canvas::Cache,
+}
+
+impl TreeViewState {
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+}
+
+/// Right panel: search tree visualization.
+pub fn view<'a>(
+    snapshot: Option<&TreeSnapshot>,
+    state: &'a TreeViewState,
+    min_visits: u64,
+    max_depth: u32,
+) -> Element<'a, Message> {
+    let snapshot_clone = snapshot.cloned();
+    Canvas::new(TreeViewProgram {
+        snapshot: snapshot_clone,
+        min_visits,
+        max_depth,
+        cache: &state.cache,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+struct TreeViewProgram<'a> {
+    snapshot: Option<TreeSnapshot>,
+    min_visits: u64,
+    max_depth: u32,
+    cache: &'a canvas::Cache,
+}
+
+impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            // Dark background
+            frame.fill_rectangle(
+                Point::ORIGIN,
+                bounds.size(),
+                colors::BACKGROUND,
+            );
+
+            let Some(snapshot) = &self.snapshot else {
+                let text = Text {
+                    content: "No search data".to_string(),
+                    position: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                    color: colors::TEXT_DIM,
+                    size: iced::Pixels(14.0),
+                    ..Text::default()
+                };
+                frame.fill_text(text);
+                return;
+            };
+
+            if snapshot.nodes.is_empty() {
+                return;
+            }
+
+            // Filter nodes by min visits and max depth
+            let visible: Vec<_> = snapshot
+                .nodes
+                .iter()
+                .filter(|n| n.visit_count >= self.min_visits && n.depth <= self.max_depth)
+                .collect();
+
+            if visible.is_empty() {
+                return;
+            }
+
+            // Layout: simple layered tree
+            // Group by depth
+            let max_depth = visible.iter().map(|n| n.depth).max().unwrap_or(0);
+            let level_height = bounds.height / (max_depth as f32 + 2.0);
+
+            // Assign x positions per level
+            let mut level_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+            let mut positions: std::collections::HashMap<u64, Point> = std::collections::HashMap::new();
+
+            // Count nodes per level first
+            for n in &visible {
+                *level_counts.entry(n.depth).or_insert(0) += 1;
+            }
+
+            let mut level_indices: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+
+            for n in &visible {
+                let count = level_counts[&n.depth];
+                let idx = level_indices.entry(n.depth).or_insert(0);
+                let x = bounds.width * (*idx as f32 + 1.0) / (count as f32 + 1.0);
+                let y = level_height * (n.depth as f32 + 1.0);
+                positions.insert(n.id, Point::new(x, y));
+                *idx += 1;
+            }
+
+            // Draw edges
+            for n in &visible {
+                if let Some(parent_id) = n.parent_id {
+                    if let (Some(&child_pos), Some(&parent_pos)) =
+                        (positions.get(&n.id), positions.get(&parent_id))
+                    {
+                        let edge = Path::line(parent_pos, child_pos);
+                        frame.stroke(
+                            &edge,
+                            Stroke::default()
+                                .with_color(Color {
+                                    a: 0.3,
+                                    ..colors::TEXT_DIM
+                                })
+                                .with_width(1.0),
+                        );
+                    }
+                }
+            }
+
+            // Draw nodes
+            let max_visits = visible.iter().map(|n| n.visit_count).max().unwrap_or(1) as f32;
+
+            for n in &visible {
+                let Some(&pos) = positions.get(&n.id) else {
+                    continue;
+                };
+
+                let size = 4.0 + 16.0 * (n.visit_count as f32 / max_visits).sqrt();
+
+                // Color by Q value: green (good for us) to red (bad)
+                let q = n.q_value as f32;
+                let node_color = if n.node_type == NodeType::Max {
+                    lerp_color(colors::RED, colors::GREEN, q)
+                } else {
+                    lerp_color(colors::RED, colors::ORANGE, q)
+                };
+
+                match n.node_type {
+                    NodeType::Max => {
+                        // Rectangle for MAX nodes
+                        frame.fill_rectangle(
+                            Point::new(pos.x - size / 2.0, pos.y - size / 2.0),
+                            Size::new(size, size),
+                            node_color,
+                        );
+                    }
+                    NodeType::Chance => {
+                        // Circle for CHANCE nodes
+                        let circle = Path::circle(pos, size / 2.0);
+                        frame.fill(&circle, node_color);
+                    }
+                }
+
+                // Label for nodes with enough visits
+                if n.visit_count as f32 > max_visits * 0.05 {
+                    if let Some(ref uci) = n.move_uci {
+                        let label = Text {
+                            content: uci.clone(),
+                            position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
+                            color: colors::TEXT,
+                            size: iced::Pixels(10.0),
+                            ..Text::default()
+                        };
+                        frame.fill_text(label);
+                    }
+                }
+            }
+        });
+
+        vec![geometry]
+    }
+}
+
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color::from_rgba(
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+        0.9,
+    )
+}

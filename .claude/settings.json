@@ -4,7 +4,22 @@
       "Read(//c/code/rust-chess/**)",
       "Bash(wc -l /c/code/rust-chess/src/*.rs)",
       "Bash(find /c/code/rust-chess/src -type f -name \"*.rs\" -exec wc -l {} +)",
-      "WebFetch(domain:lczero.org)"
+      "WebFetch(domain:lczero.org)",
+      "Bash(cargo build:*)",
+      "Bash(cat ~/.cargo/registry/src/*/iced-0.14.0/src/time.rs)",
+      "Bash(grep -rn 'pub fn every' ~/.cargo/registry/src/*/iced_futures-*/src/)",
+      "Bash(cat ~/.cargo/registry/src/*/iced_futures-0.14.0/src/backend/native/smol.rs)",
+      "Bash(ls ~/.cargo/registry/src/*/iced_futures-0.14.0/src/backend/)",
+      "Bash(cat ~/.cargo/registry/src/*/iced_futures-0.14.0/src/backend/default.rs)",
+      "Bash(grep -A 30 ^[features] ~/.cargo/registry/src/*/iced-0.14.0/Cargo.toml)",
+      "Bash(cat ~/.cargo/registry/src/*/iced_futures-0.14.0/src/backend/native/thread_pool.rs)",
+      "Bash(grep -n \"impl.*From.*Padding\\\\|pub fn padding\\\\|pub struct Padding\" ~/.cargo/registry/src/*/iced_core-0.14.0/src/padding.rs)",
+      "Bash(grep -B5 -A30 'pub fn run\\\\b' ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
+      "Bash(grep -A20 'pub fn run_with' ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
+      "Bash(grep \"pub fn title\\\\|pub fn subscription\\\\|pub fn theme\\\\|pub fn window_size\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
+      "Bash(grep -A5 \"pub fn title\\\\b\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
+      "Bash(grep -A10 \"pub trait TitleFn\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
+      "Bash(cargo test:*)"
     ]
   }
 }

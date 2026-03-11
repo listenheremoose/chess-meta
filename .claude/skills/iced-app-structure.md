@@ -1,6 +1,6 @@
 ---
 name: Iced App Structure
-description: Entry point, window config, state management, messaging, and styling patterns for the Iced application
+description: Entry point, window config, state management, messaging, and styling patterns for the Iced 0.14 application
 globs: src/**/*.rs
 ---
 
@@ -8,122 +8,116 @@ globs: src/**/*.rs
 
 ## Entry Point
 
-Use `iced::application()` builder with free functions (not trait impl):
+Use `iced::application()` with the boot/update/view free-function pattern. The first argument is a `BootFn` — a closure or function returning `(State, Task<Message>)` or just `State`:
 
 ```rust
 fn main() -> iced::Result {
-    iced::application(boot, update, view)
-        .title("Chess Meta")
-        .theme(theme)
-        .window_size((1200.0, 800.0))
-        .resizable(true)
-        .centered()
+    iced::application(App::new, App::update, App::view)
+        .title("chess-meta")
+        .subscription(App::subscription)
+        .theme(App::theme)
+        .window_size(Size::new(1400.0, 900.0))
         .run()
 }
-
-fn boot() -> (ChessMeta, Task<Message>) {
-    (ChessMeta::default(), Task::none())
-}
-
-fn theme(_state: &ChessMeta) -> Theme {
-    Theme::Dark
-}
 ```
+
+Note: `.title()` accepts `&'static str` (rendered as-is) or `Fn(&State) -> String`. The `.centered()` method does not exist in iced 0.14 — use `.window_position()` if needed.
 
 ## Window
 
-- Set a minimum size but allow free resizing (`.window_size()` + `.resizable(true)`)
-- Center on launch (`.centered()`)
+- Set a default size with `.window_size()`
+- The window is resizable by default
 
 ## State
 
-Shared domain state lives at the top level. Components only own UI-specific state:
+Single `App` struct holds all state. UI-specific state (canvas caches) lives alongside domain state:
 
 ```rust
-#[derive(Default)]
-struct ChessMeta {
-    search: SearchState,        // shared MCTS data (tree, metrics, config)
-    controls: Controls,         // top bar UI state
-    move_table: MoveTable,      // left panel UI state
-    tree_view: TreeView,        // right panel UI state
-    progress: SearchProgress,   // bottom strip UI state
+pub struct App {
+    config: Config,
+    coordinator: Coordinator,
+    move_input: String,
+    selected_move: Option<String>,
+    tree_view_state: tree_view::TreeViewState,
+    progress_state: progress::ProgressState,
 }
 ```
-
-Each component struct lives in its own module file under `src/ui/`.
 
 ## Messages
 
-Use nested message enums. The top-level `Message` wraps per-component message types:
+Use a flat message enum. Nested per-component message enums add complexity without benefit for this app's scale:
 
 ```rust
 #[derive(Debug, Clone)]
-enum Message {
-    Controls(ControlsMessage),
-    MoveTable(MoveTableMessage),
-    TreeView(TreeViewMessage),
-    Progress(ProgressMessage),
-    SearchTick,  // periodic poll for MCTS updates
-}
-```
-
-Each component defines its own message enum:
-
-```rust
-#[derive(Debug, Clone)]
-pub enum ControlsMessage {
-    PositionChanged(String),
+pub enum Message {
+    MoveInputChanged(String),
     StartSearch,
     PauseSearch,
     ResetSearch,
+    Tick,
+    SelectMove(String),
 }
 ```
 
 ## Update
 
-Route messages to components. Components receive `&mut` to shared state as needed. Use returned actions for cross-component side effects:
+Methods on `App`. Return `Task<Message>` (use `Task::none()` when no async work needed):
 
 ```rust
-fn update(state: &mut ChessMeta, message: Message) {
+pub fn update(&mut self, message: Message) -> Task<Message> {
     match message {
-        Message::Controls(message) => handle_controls_update(message, &mut state.controls, &mut state.search),
-        Message::MoveTable(message) => state.move_table.update(message),
-        Message::TreeView(message) => state.tree_view.update(message),
-        Message::SearchTick => poll_search_state(&mut state.search),
-        Message::Progress(message) => state.progress.update(message),
+        Message::StartSearch => { /* ... */ }
+        Message::Tick => { /* poll coordinator */ }
+        // ...
     }
-}
-
-fn handle_controls_update(message: ControlsMessage, controls: &mut Controls, search: &mut SearchState) {
-    let action = controls.update(message);
-    match action {
-        Some(ControlsAction::StartSearch(position)) => search.start(position),
-        Some(ControlsAction::Pause) => search.pause(),
-        None => {}
-    }
+    Task::none()
 }
 ```
 
 ## View
 
-Each component has a `view()` method returning `Element<'_, ComponentMessage>`. Components receive `&` to shared state as needed. The top-level `view` maps them to the parent `Message`:
+Method on `App`. UI panels are free functions in `ui/` submodules that accept data slices and return `Element`:
 
 ```rust
-fn view(state: &ChessMeta) -> Element<'_, Message> {
-    let controls = state.controls.view(&state.search).map(Message::Controls);
-    let move_table = state.move_table.view(&state.search).map(Message::MoveTable);
-    let tree_view = state.tree_view.view(&state.search).map(Message::TreeView);
-    let progress = state.progress.view(&state.search).map(Message::Progress);
+pub fn view(&self) -> Element<'_, Message> {
+    let top = controls::view(&self.move_input, self.coordinator.running, snapshot);
+    let left = move_table::view(root_moves, self.selected_move.as_deref());
+    let right = tree_view::view(tree_snap, &self.tree_view_state, 10, 8);
+    let bottom = progress::view(snapshot, &self.progress_state);
 
-    let main_panels = row![move_table, tree_view];
-    column![controls, main_panels, progress].into()
+    column![top, row![left, right], bottom].into()
+}
+```
+
+## Subscriptions
+
+Use `iced::time::every` for periodic polling (requires the `tokio` feature on the `iced` crate):
+
+```rust
+pub fn subscription(&self) -> Subscription<Message> {
+    if self.coordinator.running {
+        iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
+    } else {
+        Subscription::none()
+    }
 }
 ```
 
 ## Styling
 
-Use the built-in `Theme::Dark` theme. No custom stylesheet traits.
+Use the built-in `Theme::Dark` theme. Custom colors via module-level constants in `ui/mod.rs`:
 
-## Error Handling
+```rust
+pub mod colors {
+    pub const BACKGROUND: Color = Color::from_rgb(0x1E as f32 / 255.0, ...);
+    pub const GREEN: Color = ...;
+}
+```
 
-Use custom error enums per module (see error-handling skill). Surface errors in the UI via messages (e.g., a status bar or dialog), not panics.
+## Padding
+
+Iced 0.14's `Padding` accepts `u16`, `[u16; 2]`, `f32`, or `[f32; 2]`. Four-sided padding arrays (`[T; 4]`) are not supported — use a single value or construct `Padding` explicitly.
+
+## Canvas
+
+Use `iced::widget::canvas::Cache` for canvas-based panels (tree view, progress strip). Call `.clear()` when the underlying data changes to trigger a redraw.

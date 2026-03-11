@@ -40,15 +40,13 @@ enum CacheError {
 }
 ```
 
+Use `String` errors for early prototyping, but migrate to typed errors as modules stabilize.
+
 ## Error Context
 
 Include relevant data in error variants, and chain context when errors cross boundaries:
 
 ```rust
-enum EngineError {
-    UciProtocolError { expected: String, got: String },
-}
-
 enum SearchError {
     Engine { source: EngineError, position: String },
     Cache { source: CacheError, epd: String },
@@ -61,13 +59,17 @@ No `panic!` in production code. Always return `Result`.
 
 ## Unwrap/Expect
 
-Never use `.unwrap()` or `.expect()`. Always handle the error explicitly:
+Avoid `.unwrap()` and `.expect()` at module boundaries and in code that handles external input (UCI parsing, file I/O, user input).
+
+`.unwrap()` is acceptable for internal invariants where the value is structurally guaranteed to exist — e.g., accessing a tree node that was just inserted, or indexing a HashMap that was just populated. Prefer adding a comment explaining the invariant:
 
 ```rust
-// Yes
-let node = tree.get(node_id).ok_or(SearchError::NodeNotFound { node_id })?;
+// Node was just added to the tree in the line above
+let node = tree.get_mut(child_id).unwrap();
+```
 
-// Never
-let node = tree.get(node_id).unwrap();
-let node = tree.get(node_id).expect("node should exist");
+At module boundaries, always handle explicitly:
+
+```rust
+let node = tree.get(node_id).ok_or(SearchError::NodeNotFound { node_id })?;
 ```
