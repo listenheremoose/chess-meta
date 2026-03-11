@@ -99,6 +99,15 @@ impl SearchTree {
         }
     }
 
+    /// Reconstruct a tree from pre-built nodes (e.g., loaded from DB).
+    pub fn from_nodes(nodes: HashMap<u64, Node>, root_id: u64, next_id: u64) -> Self {
+        Self {
+            nodes,
+            root_id,
+            next_id,
+        }
+    }
+
     pub fn root(&self) -> &Node {
         &self.nodes[&self.root_id]
     }

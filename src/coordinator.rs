@@ -48,6 +48,7 @@ pub struct TreeNodeInfo {
 pub struct Coordinator {
     cancel: Option<Arc<AtomicBool>>,
     receiver: Option<mpsc::Receiver<SearchSnapshot>>,
+    join_handle: Option<thread::JoinHandle<()>>,
     pub latest_snapshot: Option<SearchSnapshot>,
     pub running: bool,
 }
@@ -57,6 +58,7 @@ impl Coordinator {
         Self {
             cancel: None,
             receiver: None,
+            join_handle: None,
             latest_snapshot: None,
             running: false,
         }
@@ -75,15 +77,83 @@ impl Coordinator {
         self.running = true;
         self.latest_snapshot = None;
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             run_mcts(move_sequence, config, cancel_clone, tx);
         });
+        self.join_handle = Some(handle);
     }
 
-    /// Pause/stop the search.
+    /// Load a persisted tree from the DB and populate `latest_snapshot`
+    /// so the UI can display previous results without starting a search.
+    pub fn load_persisted(&mut self, move_sequence: &str, config: &Config) {
+        let cache = match Cache::open() {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("Failed to open cache for load_persisted: {e}");
+                return;
+            }
+        };
+        let mut tree = match cache.load_tree(move_sequence) {
+            Some(t) if t.node_count() > 1 => {
+                log::info!("load_persisted: found tree with {} nodes for session '{move_sequence}'", t.node_count());
+                t
+            }
+            _ => {
+                log::info!("load_persisted: no persisted tree for session '{move_sequence}'");
+                return;
+            }
+        };
+
+        // Re-populate root eval data from caches
+        let root_id = tree.root_id;
+        let root_epd = tree.root().epd.clone();
+        let root_move_seq = tree.root().move_sequence.clone();
+        if let Some((w, d, l, policy, q_values)) = cache.get_engine_eval(&root_epd) {
+            let root = tree.get_mut(root_id).unwrap();
+            root.wdl = Some((w, d, l));
+            root.engine_policy = Some(policy);
+            root.engine_q_values = Some(q_values);
+        }
+        if let Some(maia_pol) = cache.get_maia_policy(&root_move_seq) {
+            let root = tree.get_mut(root_id).unwrap();
+            root.maia_policy = Some(maia_pol);
+        }
+
+        let moves = root_move_infos(&tree, config);
+        let best = moves.first().map(|m| m.uci_move.clone());
+        let tree_snap = build_tree_snapshot(&tree, 10);
+
+        self.latest_snapshot = Some(SearchSnapshot {
+            iteration: 0,
+            elapsed_secs: 0.0,
+            root_moves: moves,
+            best_move: best,
+            node_count: tree.node_count(),
+            iterations_per_sec: 0.0,
+            best_move_history: Vec::new(),
+            q_history: Vec::new(),
+            tree_snapshot: Some(tree_snap),
+        });
+
+        log::info!("Loaded persisted tree with {} nodes", tree.node_count());
+    }
+
+    /// Clear persisted tree data for the given move sequence.
+    pub fn clear_session(&self, move_sequence: &str) {
+        if let Ok(cache) = Cache::open() {
+            let _ = cache.clear_tree(move_sequence);
+        }
+    }
+
+    /// Pause/stop the search. Waits for the background thread to finish
+    /// its final save before returning.
     pub fn stop(&mut self) {
         if let Some(cancel) = &self.cancel {
             cancel.store(true, Ordering::Relaxed);
+        }
+        // Wait for the background thread to complete its final DB save
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.join();
         }
         self.running = false;
         self.cancel = None;
@@ -161,15 +231,69 @@ fn run_mcts(
     // Open cache
     let cache = Cache::open().ok();
 
-    // Initialize search tree
-    // Root is always MAX — we're deciding our move regardless of which color we play
-    let root_type = NodeType::Max;
-    let mut tree = SearchTree::new(position.epd.clone(), position.move_sequence.clone(), root_type);
+    // Session ID = the root move sequence (identifies which position we're searching)
+    let session_id = move_sequence.clone();
+
+    // Try to load existing tree from cache, otherwise create fresh
+    let mut tree = if let Some(loaded) = cache.as_ref().and_then(|c| c.load_tree(&session_id)) {
+        log::info!("Resumed tree with {} nodes", loaded.node_count());
+        // Re-populate root eval data from engine/maia caches
+        if let Some(c) = &cache {
+            let root = loaded.root();
+            let root_id = loaded.root_id;
+            let root_epd = root.epd.clone();
+            let root_move_seq = root.move_sequence.clone();
+            let _ = root;
+            // Need mutable access — reconstruct after loading evals
+            let mut tree = loaded;
+            if let Some((w, d, l, policy, q_values)) = c.get_engine_eval(&root_epd) {
+                let root = tree.get_mut(root_id).unwrap();
+                root.wdl = Some((w, d, l));
+                root.engine_policy = Some(policy);
+                root.engine_q_values = Some(q_values);
+            }
+            if let Some(maia_pol) = c.get_maia_policy(&root_move_seq) {
+                let root = tree.get_mut(root_id).unwrap();
+                root.maia_policy = Some(maia_pol);
+            }
+            tree
+        } else {
+            loaded
+        }
+    } else {
+        // Root is always MAX — we're deciding our move regardless of which color we play
+        SearchTree::new(position.epd.clone(), position.move_sequence.clone(), NodeType::Max)
+    };
 
     let start_time = Instant::now();
     let mut best_move_history: Vec<(u64, String)> = Vec::new();
     let mut q_history: Vec<(u64, f64)> = Vec::new();
     let update_interval = 50; // Send snapshot every N iterations
+
+    // Send an initial snapshot immediately if we resumed a non-trivial tree
+    if tree.node_count() > 1 {
+        let moves = root_move_infos(&tree, &config);
+        let best = moves.first().map(|m| m.uci_move.clone());
+        if let Some(ref bm) = best {
+            best_move_history.push((0, bm.clone()));
+        }
+        if let Some(ref bm_info) = moves.first() {
+            q_history.push((0, bm_info.practical_q));
+        }
+        let tree_snap = build_tree_snapshot(&tree, 10);
+        let snapshot = SearchSnapshot {
+            iteration: 0,
+            elapsed_secs: 0.0,
+            root_moves: moves,
+            best_move: best,
+            node_count: tree.node_count(),
+            iterations_per_sec: 0.0,
+            best_move_history: best_move_history.clone(),
+            q_history: q_history.clone(),
+            tree_snapshot: Some(tree_snap),
+        };
+        let _ = tx.send(snapshot);
+    }
 
     let mut iteration: u64 = 0;
     loop {
@@ -203,7 +327,17 @@ fn run_mcts(
         backpropagate(&mut tree, leaf_id, value);
         iteration += 1;
 
-        // 4. Send periodic updates to UI
+        // 4. Periodic flush to SQLite
+        if iteration % config.flush_interval as u64 == 0 {
+            if let Some(c) = &cache {
+                match c.save_tree(&tree, &session_id) {
+                    Ok(()) => log::debug!("Flushed tree ({} nodes) at iteration {iteration}", tree.node_count()),
+                    Err(e) => log::error!("Failed to flush tree: {e}"),
+                }
+            }
+        }
+
+        // 5. Send periodic updates to UI
         let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
         if iteration % update_interval as u64 == 0 || at_node_limit {
             let elapsed = start_time.elapsed().as_secs_f64();
@@ -236,6 +370,14 @@ fn run_mcts(
             if tx.send(snapshot).is_err() {
                 break; // Receiver dropped
             }
+        }
+    }
+
+    // Final save — persist tree state for resumption
+    if let Some(c) = &cache {
+        match c.save_tree(&tree, &session_id) {
+            Ok(()) => log::info!("Final save: {} nodes for session '{session_id}'", tree.node_count()),
+            Err(e) => log::error!("Final save failed: {e}"),
         }
     }
 }

@@ -47,12 +47,23 @@ impl Cache {
                 total_value REAL NOT NULL DEFAULT 0.0,
                 prior REAL NOT NULL DEFAULT 0.0,
                 children_json TEXT,
-                session_id TEXT NOT NULL
+                session_id TEXT NOT NULL,
+                expanded INTEGER NOT NULL DEFAULT 0,
+                terminal_value REAL
             );
             CREATE INDEX IF NOT EXISTS idx_tree_session ON tree_nodes(session_id);
             ",
         )
         .map_err(|e| format!("Failed to create cache tables: {e}"))?;
+
+        // Migrate: add columns that may be missing from older schema versions
+        let _ = conn.execute_batch(
+            "ALTER TABLE tree_nodes ADD COLUMN expanded INTEGER NOT NULL DEFAULT 0;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE tree_nodes ADD COLUMN terminal_value REAL;",
+        );
+
         Ok(())
     }
 
@@ -154,39 +165,152 @@ impl Cache {
 
     // ── Tree persistence ────────────────────────────────────────────────
 
-    pub fn save_tree_node(
+    /// Save an entire search tree to the database in a single transaction.
+    pub fn save_tree(
         &self,
-        id: u64,
-        parent_id: Option<u64>,
-        move_uci: Option<&str>,
-        node_type: &str,
-        epd: &str,
-        move_sequence: &str,
-        visit_count: u64,
-        total_value: f64,
-        prior: f64,
-        children_json: Option<&str>,
+        tree: &crate::search::SearchTree,
+        session_id: &str,
+    ) -> Result<(), String> {
+        self.conn
+            .execute("BEGIN", [])
+            .map_err(|e| format!("Failed to begin transaction: {e}"))?;
+
+        let result = self.save_tree_inner(tree, session_id);
+
+        if result.is_ok() {
+            self.conn
+                .execute("COMMIT", [])
+                .map_err(|e| format!("Failed to commit: {e}"))?;
+        } else {
+            let _ = self.conn.execute("ROLLBACK", []);
+        }
+
+        result
+    }
+
+    fn save_tree_inner(
+        &self,
+        tree: &crate::search::SearchTree,
         session_id: &str,
     ) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    id as i64,
-                    parent_id.map(|p| p as i64),
+                "DELETE FROM tree_nodes WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(|e| format!("Failed to clear old tree: {e}"))?;
+
+        let mut stmt = self.conn
+            .prepare(
+                "INSERT INTO tree_nodes (id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, session_id, expanded, terminal_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            )
+            .map_err(|e| format!("Failed to prepare save statement: {e}"))?;
+
+        for node in tree.nodes.values() {
+            let node_type_str = match node.node_type {
+                crate::search::NodeType::Max => "Max",
+                crate::search::NodeType::Chance => "Chance",
+            };
+            let children_json = serde_json::to_string(&node.children)
+                .map_err(|e| format!("JSON error: {e}"))?;
+
+            stmt.execute(params![
+                node.id as i64,
+                node.parent.map(|p| p as i64),
+                node.move_uci.as_deref(),
+                node_type_str,
+                node.epd,
+                node.move_sequence,
+                node.visit_count as i64,
+                node.total_value,
+                node.prior,
+                children_json,
+                session_id,
+                node.expanded as i32,
+                node.terminal_value,
+            ])
+            .map_err(|e| format!("Failed to save node {}: {e}", node.id))?;
+        }
+
+        Ok(())
+    }
+
+    /// Load a search tree from the database by session ID.
+    pub fn load_tree(
+        &self,
+        session_id: &str,
+    ) -> Option<crate::search::SearchTree> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, parent_id, move_uci, node_type, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value FROM tree_nodes WHERE session_id = ?1",
+            )
+            .ok()?;
+
+        let rows: Vec<_> = stmt
+            .query_map(params![session_id], |row| {
+                let id: i64 = row.get(0)?;
+                let parent_id: Option<i64> = row.get(1)?;
+                let move_uci: Option<String> = row.get(2)?;
+                let node_type_str: String = row.get(3)?;
+                let epd: String = row.get(4)?;
+                let move_sequence: String = row.get(5)?;
+                let visit_count: i64 = row.get(6)?;
+                let total_value: f64 = row.get(7)?;
+                let prior: f64 = row.get(8)?;
+                let children_json: Option<String> = row.get(9)?;
+                let expanded: i32 = row.get(10)?;
+                let terminal_value: Option<f64> = row.get(11)?;
+                Ok((
+                    id as u64,
+                    parent_id.map(|p| p as u64),
                     move_uci,
-                    node_type,
+                    node_type_str,
                     epd,
                     move_sequence,
-                    visit_count as i64,
+                    visit_count as u64,
                     total_value,
                     prior,
                     children_json,
-                    session_id,
-                ],
-            )
-            .map_err(|e| format!("Failed to save tree node: {e}"))?;
-        Ok(())
+                    expanded != 0,
+                    terminal_value,
+                ))
+            })
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if rows.is_empty() {
+            return None;
+        }
+
+        let mut nodes = std::collections::HashMap::new();
+        let mut max_id: u64 = 0;
+
+        for (id, parent_id, move_uci, node_type_str, epd, move_sequence, visit_count, total_value, prior, children_json, expanded, terminal_value) in rows {
+            let node_type = match node_type_str.as_str() {
+                "Chance" => crate::search::NodeType::Chance,
+                _ => crate::search::NodeType::Max,
+            };
+            let children: Vec<u64> = children_json
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default();
+
+            let mut node = crate::search::Node::new(
+                id, parent_id, move_uci, node_type, epd, move_sequence,
+            );
+            node.visit_count = visit_count;
+            node.total_value = total_value;
+            node.prior = prior;
+            node.children = children;
+            node.expanded = expanded;
+            node.terminal_value = terminal_value;
+
+            max_id = max_id.max(id);
+            nodes.insert(id, node);
+        }
+
+        Some(crate::search::SearchTree::from_nodes(nodes, 0, max_id + 1))
     }
 
     pub fn clear_tree(&self, session_id: &str) -> Result<(), String> {
@@ -241,7 +365,9 @@ mod tests {
                 total_value REAL NOT NULL DEFAULT 0.0,
                 prior REAL NOT NULL DEFAULT 0.0,
                 children_json TEXT,
-                session_id TEXT NOT NULL
+                session_id TEXT NOT NULL,
+                expanded INTEGER NOT NULL DEFAULT 0,
+                terminal_value REAL
             );
             ",
         )

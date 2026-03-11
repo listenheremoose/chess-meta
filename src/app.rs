@@ -29,10 +29,13 @@ pub struct App {
 impl App {
     pub fn new() -> (Self, Task<Message>) {
         let config = Config::load();
+        let mut coordinator = Coordinator::new();
+        // Load any persisted search results for the default (starting) position
+        coordinator.load_persisted("", &config);
         (
             Self {
                 config,
-                coordinator: Coordinator::new(),
+                coordinator,
                 move_input: String::new(),
                 selected_move: None,
                 tree_view_state: tree_view::TreeViewState::default(),
@@ -79,6 +82,7 @@ impl App {
             }
             Message::ResetSearch => {
                 self.coordinator.stop();
+                self.coordinator.clear_session(&self.move_input);
                 self.coordinator.latest_snapshot = None;
                 self.selected_move = None;
                 self.tree_view_state.clear_cache();

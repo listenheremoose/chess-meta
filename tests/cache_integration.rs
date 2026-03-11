@@ -117,63 +117,56 @@ fn maia_cache_different_move_sequences_are_separate() {
     assert!(!got_b.contains_key("d7d5"));
 }
 
-// ── Tree node persistence ────────────────────────────────────────────
+// ── Tree persistence ─────────────────────────────────────────────────
+
+use chess_meta::search::{NodeType, SearchTree};
 
 #[test]
-fn tree_node_save_and_clear() {
+fn tree_save_load_roundtrip() {
     let cache = Cache::open_in_memory().unwrap();
 
-    cache
-        .save_tree_node(
-            0,
-            None,
-            None,
-            "Max",
-            "startpos-epd",
-            "",
-            10,
-            5.5,
-            1.0,
-            Some("[1,2,3]"),
-            "session-1",
-        )
-        .unwrap();
+    let mut tree = SearchTree::new("startpos-epd".into(), "".into(), NodeType::Max);
+    let root_id = tree.root_id;
+    tree.add_child(root_id, "e2e4".into(), NodeType::Chance, "after-e4-epd".into(), "e2e4".into(), 0.45);
+    tree.add_child(root_id, "d2d4".into(), NodeType::Chance, "after-d4-epd".into(), "d2d4".into(), 0.35);
 
-    cache
-        .save_tree_node(
-            1,
-            Some(0),
-            Some("e2e4"),
-            "Chance",
-            "after-e4-epd",
-            "e2e4",
-            4,
-            2.0,
-            0.45,
-            None,
-            "session-1",
-        )
-        .unwrap();
+    cache.save_tree(&tree, "session-1").unwrap();
 
-    // Clear should not error.
+    let loaded = cache.load_tree("session-1").unwrap();
+    assert_eq!(loaded.node_count(), tree.node_count());
+    assert_eq!(loaded.root().epd, "startpos-epd");
+    assert_eq!(loaded.root().children.len(), 2);
+}
+
+#[test]
+fn tree_save_and_clear() {
+    let cache = Cache::open_in_memory().unwrap();
+
+    let tree = SearchTree::new("startpos-epd".into(), "".into(), NodeType::Max);
+    cache.save_tree(&tree, "session-1").unwrap();
+
     cache.clear_tree("session-1").unwrap();
+    assert!(cache.load_tree("session-1").is_none());
 
     // Clearing a non-existent session is also fine.
     cache.clear_tree("no-such-session").unwrap();
 }
 
 #[test]
-fn tree_node_overwrite_on_same_id() {
+fn tree_save_overwrites_previous() {
     let cache = Cache::open_in_memory().unwrap();
 
-    cache
-        .save_tree_node(42, None, None, "Max", "epd", "", 5, 2.5, 1.0, None, "s1")
-        .unwrap();
-    // Overwrite with updated visit count.
-    cache
-        .save_tree_node(42, None, None, "Max", "epd", "", 10, 6.0, 1.0, None, "s1")
-        .unwrap();
-    // Should succeed (INSERT OR REPLACE).
+    let tree1 = SearchTree::new("epd-v1".into(), "".into(), NodeType::Max);
+    cache.save_tree(&tree1, "s1").unwrap();
+
+    let mut tree2 = SearchTree::new("epd-v2".into(), "".into(), NodeType::Max);
+    let root_id = tree2.root_id;
+    tree2.add_child(root_id, "e2e4".into(), NodeType::Chance, "child-epd".into(), "e2e4".into(), 0.5);
+    cache.save_tree(&tree2, "s1").unwrap();
+
+    let loaded = cache.load_tree("s1").unwrap();
+    assert_eq!(loaded.root().epd, "epd-v2");
+    assert_eq!(loaded.node_count(), 2);
 }
 
 // ── Cross-module: cache + position EPD keys ──────────────────────────
