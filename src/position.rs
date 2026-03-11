@@ -1,4 +1,4 @@
-use shakmaty::{Chess, Color, Move, Position, fen::Epd, uci::UciMove};
+use shakmaty::{Chess, Color, Position, fen::Epd, uci::UciMove};
 
 /// Tracks position state with both EPD (for engine cache) and move sequence (for Maia cache).
 #[derive(Debug, Clone)]
@@ -81,16 +81,6 @@ impl PositionState {
         })
     }
 
-    /// The side to move.
-    pub fn turn(&self) -> Color {
-        self.chess.turn()
-    }
-
-    /// Is the game over? (checkmate, stalemate, or insufficient material)
-    pub fn is_game_over(&self) -> bool {
-        self.chess.is_game_over()
-    }
-
     /// Terminal value from White's perspective in [0, 1], if the game is over.
     pub fn terminal_value(&self) -> Option<f64> {
         if self.chess.is_checkmate() {
@@ -107,14 +97,6 @@ impl PositionState {
         }
     }
 
-    /// Get all legal moves as UCI strings.
-    pub fn legal_moves_uci(&self) -> Vec<String> {
-        let legals = self.chess.legal_moves();
-        legals
-            .iter()
-            .map(|m| uci_move_str(m))
-            .collect()
-    }
 }
 
 /// Format a position as EPD string.
@@ -122,17 +104,21 @@ fn format_epd(chess: &Chess) -> String {
     Epd::from_position(chess.clone(), shakmaty::EnPassantMode::Legal).to_string()
 }
 
-/// Convert a shakmaty Move to UCI string.
-fn uci_move_str(m: &Move) -> String {
-    let uci = UciMove::from_move(m, shakmaty::CastlingMode::Standard);
-    uci.to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use shakmaty::Color;
+    use shakmaty::{Color, Position};
 
     use super::PositionState;
+
+    /// Helper: get the side to move.
+    fn turn(pos: &PositionState) -> Color {
+        pos.chess.turn()
+    }
+
+    /// Helper: check if the game is over.
+    fn is_game_over(pos: &PositionState) -> bool {
+        pos.chess.is_game_over()
+    }
 
     // -- Startpos --
 
@@ -149,14 +135,14 @@ mod tests {
     fn from_moves_empty_returns_startpos() {
         let pos = PositionState::from_moves("").unwrap();
         assert!(pos.move_sequence.is_empty());
-        assert_eq!(pos.turn(), Color::White);
+        assert_eq!(turn(&pos), Color::White);
     }
 
     #[test]
     fn from_moves_tracks_sequence_and_turn() {
         let pos = PositionState::from_moves("e2e4 e7e5").unwrap();
         assert_eq!(pos.move_sequence, "e2e4 e7e5");
-        assert_eq!(pos.turn(), Color::White);
+        assert_eq!(turn(&pos), Color::White);
     }
 
     #[test]
@@ -178,14 +164,14 @@ mod tests {
         let pos = PositionState::startpos();
         let pos2 = pos.apply_uci("e2e4").unwrap();
         assert_eq!(pos2.move_sequence, "e2e4");
-        assert_eq!(pos2.turn(), Color::Black);
+        assert_eq!(turn(&pos2), Color::Black);
     }
 
     #[test]
     fn apply_uci_preserves_original_position() {
         let pos = PositionState::startpos();
         let _pos2 = pos.apply_uci("e2e4").unwrap();
-        assert_eq!(pos.turn(), Color::White); // Original unchanged
+        assert_eq!(turn(&pos), Color::White); // Original unchanged
         assert!(pos.move_sequence.is_empty());
     }
 
@@ -202,14 +188,14 @@ mod tests {
     fn terminal_checkmate_returns_winner_value() {
         // Scholar's mate — White wins
         let pos = PositionState::from_moves("e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7").unwrap();
-        assert!(pos.is_game_over());
+        assert!(is_game_over(&pos));
         assert_eq!(pos.terminal_value(), Some(1.0)); // White wins
     }
 
     #[test]
     fn terminal_non_game_over_returns_none() {
         let pos = PositionState::from_moves("e2e4").unwrap();
-        assert!(!pos.is_game_over());
+        assert!(!is_game_over(&pos));
         assert_eq!(pos.terminal_value(), None);
     }
 

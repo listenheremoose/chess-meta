@@ -13,7 +13,6 @@ pub enum Message {
     PauseSearch,
     ResetSearch,
     Tick,
-    SelectMove(String),
 }
 
 /// Main application state.
@@ -45,10 +44,6 @@ impl App {
         )
     }
 
-    pub fn title(&self) -> String {
-        "chess-meta".to_string()
-    }
-
     pub fn theme(&self) -> Theme {
         Theme::Dark
     }
@@ -68,7 +63,6 @@ impl App {
             Message::PauseSearch => self.coordinator.stop(),
             Message::ResetSearch => self.handle_reset_search(),
             Message::Tick => self.handle_tick(),
-            Message::SelectMove(uci) => self.selected_move = Some(uci),
         }
         Task::none()
     }

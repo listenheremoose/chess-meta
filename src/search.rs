@@ -112,6 +112,7 @@ impl SearchTree {
         &self.nodes[&self.root_id]
     }
 
+    #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn root_mut(&mut self) -> &mut Node {
         self.nodes.get_mut(&self.root_id).unwrap()
     }
@@ -368,64 +369,11 @@ pub fn candidate_moves_chance(
 
 /// Select the best move at the root for final recommendation.
 /// Uses safety parameter to blend expected score with worst-case.
+#[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
 pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo> {
-    let root = tree.root();
-    if root.children.is_empty() {
-        return None;
-    }
-
-    let is_white = is_white_to_move_from_node(root);
-
-    let engine_position_value = root.wdl.map(|(w, d, _l)| {
-        w as f64 / 1000.0 + config.contempt * d as f64 / 1000.0
-    });
-
-    let mut move_infos: Vec<RootMoveInfo> = root
-        .children
-        .iter()
-        .filter_map(|&child_id| {
-            let child = tree.get(child_id)?;
-            let uci = child.move_uci.as_ref()?.clone();
-            let visits = child.visit_count;
-            if visits == 0 {
-                return None;
-            }
-            let q_white = child.q_value();
-            let q_stm = if is_white { q_white } else { 1.0 - q_white };
-
-            let engine_pol = root.engine_policy.as_ref().and_then(|pol| {
-                lookup_castling_aware(&uci, pol).map(|p| p as f64)
-            });
-
-            // Worst-case: minimum Q among likely opponent responses
-            let worst_case = worst_case_value(tree, child_id, is_white);
-
-            // Practical Q: blend expected with worst-case
-            let practical_q = (1.0 - config.safety) * q_stm + config.safety * worst_case;
-
-            let delta = engine_position_value.map(|ev| practical_q - ev);
-
-            Some(RootMoveInfo {
-                uci_move: uci,
-                node_id: child_id,
-                visits,
-                engine_policy: engine_pol,
-                practical_q,
-                delta,
-                q_white,
-                worst_case,
-                wdl: child.wdl,
-            })
-        })
-        .collect();
-
-    move_infos.sort_by(|a, b| {
-        b.practical_q
-            .partial_cmp(&a.practical_q)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    move_infos.into_iter().next()
+    let mut infos = root_move_infos(tree, config);
+    infos.retain(|i| i.visits > 0);
+    infos.into_iter().next()
 }
 
 /// Get all root move infos sorted by practical Q.
@@ -493,6 +441,7 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
 #[derive(Debug, Clone)]
 pub struct RootMoveInfo {
     pub uci_move: String,
+    #[allow(dead_code)] // Read by integration tests (separate crate, invisible to lint)
     pub node_id: u64,
     pub visits: u64,
     /// Engine policy percentage for this move (0-100 from NN).

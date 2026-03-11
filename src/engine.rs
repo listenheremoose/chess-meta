@@ -30,6 +30,7 @@ impl EngineEval {
     }
 
     /// Get the top N moves by policy.
+    #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn top_policy_moves(&self, n: usize) -> Vec<(String, f32)> {
         let mut moves: Vec<_> = self.policy.iter().map(|(m, p)| (m.clone(), *p)).collect();
         moves.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

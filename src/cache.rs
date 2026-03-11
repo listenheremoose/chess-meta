@@ -11,7 +11,8 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// Open an in-memory SQLite database (for testing).
+    /// Open an in-memory SQLite database (for testing / integration tests).
+    #[allow(dead_code)] // Used by integration tests (separate crate, invisible to lint)
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory()
             .map_err(|e| format!("Failed to open in-memory DB: {e}"))?;

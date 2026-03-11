@@ -97,19 +97,6 @@ impl Config {
         }
     }
 
-    /// Save config to the standard settings file.
-    pub fn save(&self) -> Result<(), String> {
-        let path = Self::config_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir: {e}"))?;
-        }
-        let contents =
-            toml::to_string_pretty(self).map_err(|e| format!("Failed to serialize config: {e}"))?;
-        std::fs::write(&path, contents).map_err(|e| format!("Failed to write config: {e}"))?;
-        Ok(())
-    }
-
     fn config_path() -> PathBuf {
         PathBuf::from("settings.toml")
     }
