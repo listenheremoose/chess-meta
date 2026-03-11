@@ -21,5 +21,13 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "search"
 harness = false
 
+[[bench]]
+name = "cache"
+harness = false
+
+[[bench]]
+name = "parsing"
+harness = false
+
 [features]
 search-trace = []
