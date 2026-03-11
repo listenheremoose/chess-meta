@@ -27,7 +27,11 @@
       "Bash(cargo search:*)",
       "Bash(for pkg:*)",
       "Bash(do echo:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(wc -l c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
+      "Bash(grep -n Self:: c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
+      "Bash(grep -n \"TODO\\\\|FIXME\" c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
+      "Bash(grep -n impl.*Self c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)"
     ]
   }
 }

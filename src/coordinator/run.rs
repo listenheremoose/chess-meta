@@ -90,18 +90,25 @@ pub(super) fn run_mcts(
 
     let elapsed = start_time.elapsed().as_secs_f64();
     let moves = root_move_infos(&tree, &config);
-    let best = moves.first().map(|move_info| move_info.uci_move.as_str()).unwrap_or("none");
-    let best_q = moves.first().map(|move_info| move_info.practical_q).unwrap_or(0.0);
+    let best = match moves.first() {
+        Some(move_info) => move_info.uci_move.as_str(),
+        None => "none",
+    };
+    let best_q = match moves.first() {
+        Some(move_info) => move_info.practical_q,
+        None => 0.0,
+    };
     log::info!(
         "Search complete iterations={iteration} best={best} practical_q={best_q:.4} nodes={} elapsed={elapsed:.1}s cache_hits={cache_hits} cache_misses={cache_misses}",
         tree.node_count()
     );
 
-    if let Some(c) = &cache {
-        match c.save_tree(&tree, &session_id) {
+    match &cache {
+        Some(c) => match c.save_tree(&tree, &session_id) {
             Ok(()) => log::info!("Final save: {} nodes for session '{session_id}'", tree.node_count()),
             Err(e) => log::error!("Final save failed: {e}"),
-        }
+        },
+        None => {}
     }
 }
 
@@ -176,8 +183,14 @@ fn repopulate_root_evals(mut tree: SearchTree, cache: Option<&Cache>, _config: &
 
 fn log_milestone(iteration: u64, tree: &SearchTree, config: &Config) {
     let moves = root_move_infos(tree, config);
-    let best = moves.first().map(|move_info| move_info.uci_move.as_str()).unwrap_or("?");
-    let best_q = moves.first().map(|move_info| move_info.practical_q).unwrap_or(0.0);
+    let best = match moves.first() {
+        Some(move_info) => move_info.uci_move.as_str(),
+        None => "?",
+    };
+    let best_q = match moves.first() {
+        Some(move_info) => move_info.practical_q,
+        None => 0.0,
+    };
     log::info!(
         "Search milestone iteration={iteration} best={best} practical_q={best_q:.4} nodes={}",
         tree.node_count()
@@ -185,11 +198,12 @@ fn log_milestone(iteration: u64, tree: &SearchTree, config: &Config) {
 }
 
 fn flush_tree(cache: Option<&Cache>, tree: &SearchTree, session_id: &str, iteration: u64) {
-    if let Some(c) = cache {
-        match c.save_tree(tree, session_id) {
+    match cache {
+        Some(c) => match c.save_tree(tree, session_id) {
             Ok(()) => log::debug!("Flushed tree ({} nodes) at iteration {iteration}", tree.node_count()),
             Err(e) => log::error!("Failed to flush tree: {e}"),
-        }
+        },
+        None => {}
     }
 }
 

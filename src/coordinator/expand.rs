@@ -53,6 +53,7 @@ pub(super) fn expand_and_evaluate(
         .map_err(|e| CoordinatorError::Position { source: e, move_sequence: move_seq.clone() })?;
     match position.terminal_value() {
         Some(tv) => {
+            // leaf_id was just selected and passed in — always present
             let leaf = tree.get_mut(leaf_id).unwrap();
             leaf.terminal_value = Some(tv);
             leaf.expanded = true;
@@ -67,6 +68,7 @@ pub(super) fn expand_and_evaluate(
     let value = engine_eval.value_white(config.contempt, white_to_move);
 
     {
+        // leaf_id was just selected and passed in — always present
         let leaf = tree.get_mut(leaf_id).unwrap();
         leaf.engine_policy = Some(engine_eval.policy.clone());
         leaf.engine_q_values = Some(engine_eval.q_values.clone());
@@ -97,6 +99,7 @@ pub(super) fn expand_and_evaluate(
                     *prior,
                 );
                 match child_terminal {
+                    // child_id was just returned from add_child above — always present
                     Some(tv) => { tree.get_mut(child_id).unwrap().terminal_value = Some(tv); }
                     None => {}
                 }
@@ -107,6 +110,7 @@ pub(super) fn expand_and_evaluate(
         }
     });
 
+    // leaf_id was just selected and passed in — always present
     tree.get_mut(leaf_id).unwrap().expanded = true;
 
     Ok(value)

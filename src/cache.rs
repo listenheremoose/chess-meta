@@ -355,16 +355,15 @@ impl Cache {
         });
 
         // Build Vec arena: index i corresponds to NodeId(i)
-        let mut nodes = Vec::with_capacity((max_id + 1) as usize);
-        for i in 0..=max_id {
-            match node_map.remove(&i) {
-                Some(node) => nodes.push(node),
-                None => nodes.push(crate::search::Node::new(
+        let nodes = (0..=max_id)
+            .map(|i| match node_map.remove(&i) {
+                Some(node) => node,
+                None => crate::search::Node::new(
                     NodeId(i), None, None, crate::search::NodeType::Max,
                     String::new(), String::new(),
-                )),
-            }
-        }
+                ),
+            })
+            .collect::<Vec<_>>();
 
         Some(crate::search::SearchTree::from_nodes(nodes, NodeId(0), max_id + 1))
     }
