@@ -11,11 +11,11 @@ pub fn view<'a>(
     selected_move: Option<&str>,
 ) -> Element<'a, Message> {
     let header = row![
-        text("Move").width(Length::FillPortion(2)).size(13),
-        text("Policy").width(Length::FillPortion(2)).size(13),
-        text("Pract Q").width(Length::FillPortion(2)).size(13),
-        text("Delta").width(Length::FillPortion(2)).size(13),
-        text("Visits").width(Length::FillPortion(2)).size(13),
+        text("Move").width(Length::FillPortion(2)).size(13).color(colors::TEXT_DIM),
+        text("Policy").width(Length::FillPortion(2)).size(13).color(colors::TEXT_DIM),
+        text("Pract Q").width(Length::FillPortion(2)).size(13).color(colors::TEXT_DIM),
+        text("Delta").width(Length::FillPortion(2)).size(13).color(colors::TEXT_DIM),
+        text("Visits").width(Length::FillPortion(2)).size(13).color(colors::TEXT_DIM),
     ]
     .spacing(4)
     .padding(4);
@@ -43,18 +43,20 @@ pub fn view<'a>(
         };
 
         let move_row = row![
-            text(&info.uci_move).width(Length::FillPortion(2)).size(13),
-            text(policy_str).width(Length::FillPortion(2)).size(13),
+            text(&info.uci_move).width(Length::FillPortion(2)).size(13).color(colors::TEXT),
+            text(policy_str).width(Length::FillPortion(2)).size(13).color(colors::TEXT),
             text(format!("{:.3}", info.practical_q))
                 .width(Length::FillPortion(2))
-                .size(13),
+                .size(13)
+                .color(colors::TEXT),
             text(delta_str)
                 .width(Length::FillPortion(2))
                 .size(13)
                 .color(delta_color),
             text(format!("{}", info.visits))
                 .width(Length::FillPortion(2))
-                .size(13),
+                .size(13)
+                .color(colors::TEXT),
         ]
         .spacing(4)
         .padding(4);
@@ -104,11 +106,13 @@ fn move_detail(info: &RootMoveInfo) -> Option<Element<'_, Message>> {
     details.push(
         text(format!("Q (White): {:.4}", info.q_white))
             .size(12)
+            .color(colors::TEXT)
             .into(),
     );
     details.push(
         text(format!("Worst-case: {:.4}", info.worst_case))
             .size(12)
+            .color(colors::TEXT)
             .into(),
     );
 
@@ -122,7 +126,7 @@ fn move_detail(info: &RootMoveInfo) -> Option<Element<'_, Message>> {
                     draws as f64 / total * 100.0,
                     losses as f64 / total * 100.0,
                 );
-                details.push(text(wdl_str).size(12).into());
+                details.push(text(wdl_str).size(12).color(colors::TEXT).into());
             }
         }
         None => {}

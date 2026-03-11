@@ -46,7 +46,7 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::Dark
+        Theme::KanagawaDragon
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
