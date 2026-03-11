@@ -69,7 +69,7 @@ impl Default for Config {
 
             max_nodes: 150_000,
 
-            engine_top_n: 3,
+            engine_top_n: 999,
             maia_top_n: 5,
 
             nn_cache_size_mb: 512,
@@ -138,7 +138,7 @@ mod tests {
         assert!((config.contempt - 0.6).abs() < 0.001);
         assert!((config.safety - 0.2).abs() < 0.001);
         assert_eq!(config.max_nodes, 150_000);
-        assert_eq!(config.engine_top_n, 3);
+        assert_eq!(config.engine_top_n, 999);
         assert_eq!(config.maia_top_n, 5);
         assert_eq!(config.nn_cache_size_mb, 512);
         assert_eq!(config.ucinewgame_interval, 500);
@@ -192,6 +192,6 @@ mod tests {
         assert_eq!(config.max_nodes, 200_000);
         // Other fields should have defaults
         assert!((config.cpuct_init - 1.5).abs() < 0.001);
-        assert_eq!(config.engine_top_n, 3);
+        assert_eq!(config.engine_top_n, 999);
     }
 }
