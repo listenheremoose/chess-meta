@@ -104,11 +104,12 @@ impl App {
             self.progress_state.clear_cache();
 
             // Auto-select best move if none selected
-            if self.selected_move.is_none() {
-                match &self.coordinator.latest_snapshot {
+            match &self.selected_move {
+                None => match &self.coordinator.latest_snapshot {
                     Some(snap) => self.selected_move = snap.best_move.clone(),
                     None => {}
-                }
+                },
+                Some(_) => {}
             }
         }
     }

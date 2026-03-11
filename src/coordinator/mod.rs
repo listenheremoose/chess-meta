@@ -88,15 +88,15 @@ impl Coordinator {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_clone = Arc::clone(&cancel);
-        let (tx, rx) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
 
         self.cancel = Some(cancel);
-        self.receiver = Some(rx);
+        self.receiver = Some(receiver);
         self.running = true;
         self.latest_snapshot = None;
 
         let handle = thread::spawn(move || {
-            run::run_mcts(move_sequence, config, cancel_clone, tx);
+            run::run_mcts(move_sequence, config, cancel_clone, sender);
         });
         self.join_handle = Some(handle);
     }
@@ -105,16 +105,16 @@ impl Coordinator {
     /// so the UI can display previous results without starting a search.
     pub fn load_persisted(&mut self, move_sequence: &str, config: &Config) {
         let cache = match Cache::open() {
-            Ok(c) => c,
+            Ok(cache) => cache,
             Err(e) => {
                 log::error!("Failed to open cache for load_persisted: {e}");
                 return;
             }
         };
         let mut tree = match cache.load_tree(move_sequence) {
-            Some(t) if t.node_count() > 1 => {
-                log::info!("load_persisted: found tree with {} nodes for session '{move_sequence}'", t.node_count());
-                t
+            Some(loaded_tree) if loaded_tree.node_count() > 1 => {
+                log::info!("load_persisted: found tree with {} nodes for session '{move_sequence}'", loaded_tree.node_count());
+                loaded_tree
             }
             _ => {
                 log::info!("load_persisted: no persisted tree for session '{move_sequence}'");
@@ -125,25 +125,27 @@ impl Coordinator {
         let root_id = tree.root_id;
         let root_epd = tree.root().epd.clone();
         let root_move_seq = tree.root().move_sequence.clone();
-        if let Some((w, d, l, policy, q_values)) = cache.get_engine_eval(&root_epd) {
-            match tree.get_mut(root_id) {
+        match cache.get_engine_eval(&root_epd) {
+            Some((w, d, l, policy, q_values)) => match tree.get_mut(root_id) {
                 Some(root) => {
                     root.wdl = Some((w, d, l));
                     root.engine_policy = Some(policy);
                     root.engine_q_values = Some(q_values);
                 }
                 None => log::error!("load_persisted: root node {:?} missing from loaded tree", root_id),
-            }
+            },
+            None => {}
         }
-        if let Some(maia_pol) = cache.get_maia_policy(&root_move_seq) {
-            match tree.get_mut(root_id) {
-                Some(root) => { root.maia_policy = Some(maia_pol); }
+        match cache.get_maia_policy(&root_move_seq) {
+            Some(maia_policy) => match tree.get_mut(root_id) {
+                Some(root) => { root.maia_policy = Some(maia_policy); }
                 None => log::error!("load_persisted: root node {:?} missing from loaded tree", root_id),
-            }
+            },
+            None => {}
         }
 
         let moves = root_move_infos(&tree, config);
-        let best = moves.first().map(|m| m.uci_move.clone());
+        let best = moves.first().map(|move_info| move_info.uci_move.clone());
         let tree_snap = run::build_tree_snapshot(&tree, 10);
 
         self.latest_snapshot = Some(SearchSnapshot {
@@ -172,11 +174,13 @@ impl Coordinator {
     /// Pause/stop the search. Waits for the background thread to finish
     /// its final save before returning.
     pub fn stop(&mut self) {
-        if let Some(cancel) = &self.cancel {
-            cancel.store(true, Ordering::Relaxed);
+        match &self.cancel {
+            Some(cancel) => cancel.store(true, Ordering::Relaxed),
+            None => {}
         }
-        if let Some(handle) = self.join_handle.take() {
-            let _ = handle.join();
+        match self.join_handle.take() {
+            Some(handle) => { let _ = handle.join(); }
+            None => {}
         }
         self.running = false;
         self.cancel = None;
@@ -186,9 +190,9 @@ impl Coordinator {
     /// Poll for new snapshots. Returns true if a new snapshot was received.
     pub fn poll(&mut self) -> bool {
         let mut updated = false;
-        if let Some(rx) = &self.receiver {
-            loop {
-                match rx.try_recv() {
+        match &self.receiver {
+            Some(receiver) => loop {
+                match receiver.try_recv() {
                     Ok(snapshot) => {
                         self.latest_snapshot = Some(snapshot);
                         updated = true;
@@ -200,7 +204,8 @@ impl Coordinator {
                         break;
                     }
                 }
-            }
+            },
+            None => {}
         }
         updated
     }

@@ -4,6 +4,8 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 
 use crate::engine::parse_verbose_move_stats;
 
+const LINE_BUFFER_CAPACITY: usize = 512;
+
 #[derive(Debug)]
 pub enum MaiaError {
     SpawnFailed(std::io::Error),
@@ -63,7 +65,7 @@ impl MaiaEngine {
             child,
             stdin,
             reader,
-            line_buffer: String::with_capacity(512),
+            line_buffer: String::with_capacity(LINE_BUFFER_CAPACITY),
             query_count: 0,
             ucinewgame_interval,
         };

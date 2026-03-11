@@ -20,7 +20,7 @@ pub(super) fn run_mcts(
     move_sequence: String,
     config: Config,
     cancel: Arc<AtomicBool>,
-    tx: mpsc::Sender<SearchSnapshot>,
+    sender: mpsc::Sender<SearchSnapshot>,
 ) {
     let position = match PositionState::from_moves(&move_sequence) {
         Ok(position) => position,
@@ -52,7 +52,7 @@ pub(super) fn run_mcts(
     let mut search_state = SearchState::new();
 
     if tree.node_count() > 1 {
-        send_initial_snapshot(&tree, &config, &tx, &mut best_move_history, &mut q_history);
+        send_initial_snapshot(&tree, &config, &sender, &mut best_move_history, &mut q_history);
     }
 
     let mut iteration: u64 = 0;
@@ -84,7 +84,7 @@ pub(super) fn run_mcts(
         let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
         if iteration % update_interval == 0 || at_node_limit {
             let elapsed = start_time.elapsed().as_secs_f64();
-            send_snapshot(&tree, &config, &tx, iteration, elapsed, &mut best_move_history, &mut q_history);
+            send_snapshot(&tree, &config, &sender, iteration, elapsed, &mut best_move_history, &mut q_history);
         }
     }
 
@@ -128,7 +128,10 @@ fn load_or_create_tree(
     position: &PositionState,
     config: &Config,
 ) -> SearchTree {
-    let cached_tree = cache.and_then(|c| c.load_tree(session_id));
+    let cached_tree = match cache {
+        Some(cache) => cache.load_tree(session_id),
+        None => None,
+    };
     match cached_tree {
         Some(loaded) => {
             log::info!("Resumed tree with {} nodes", loaded.node_count());
@@ -141,28 +144,34 @@ fn load_or_create_tree(
 }
 
 fn repopulate_root_evals(mut tree: SearchTree, cache: Option<&Cache>, _config: &Config) -> SearchTree {
-    let Some(c) = cache else { return tree; };
-    let root_id = tree.root_id;
-    let root_epd = tree.root().epd.clone();
-    let root_move_seq = tree.root().move_sequence.clone();
+    match cache {
+        None => tree,
+        Some(cache) => {
+            let root_id = tree.root_id;
+            let root_epd = tree.root().epd.clone();
+            let root_move_seq = tree.root().move_sequence.clone();
 
-    if let Some((w, d, l, policy, q_values)) = c.get_engine_eval(&root_epd) {
-        match tree.get_mut(root_id) {
-            Some(root) => {
-                root.wdl = Some((w, d, l));
-                root.engine_policy = Some(policy);
-                root.engine_q_values = Some(q_values);
+            match cache.get_engine_eval(&root_epd) {
+                Some((w, d, l, policy, q_values)) => match tree.get_mut(root_id) {
+                    Some(root) => {
+                        root.wdl = Some((w, d, l));
+                        root.engine_policy = Some(policy);
+                        root.engine_q_values = Some(q_values);
+                    }
+                    None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
+                },
+                None => {}
             }
-            None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
+            match cache.get_maia_policy(&root_move_seq) {
+                Some(maia_policy) => match tree.get_mut(root_id) {
+                    Some(root) => { root.maia_policy = Some(maia_policy); }
+                    None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
+                },
+                None => {}
+            }
+            tree
         }
     }
-    if let Some(maia_pol) = c.get_maia_policy(&root_move_seq) {
-        match tree.get_mut(root_id) {
-            Some(root) => { root.maia_policy = Some(maia_pol); }
-            None => log::error!("run_mcts: root node {:?} missing from loaded tree", root_id),
-        }
-    }
-    tree
 }
 
 fn log_milestone(iteration: u64, tree: &SearchTree, config: &Config) {
@@ -187,20 +196,22 @@ fn flush_tree(cache: Option<&Cache>, tree: &SearchTree, session_id: &str, iterat
 fn send_initial_snapshot(
     tree: &SearchTree,
     config: &Config,
-    tx: &mpsc::Sender<SearchSnapshot>,
+    sender: &mpsc::Sender<SearchSnapshot>,
     best_move_history: &mut Vec<(u64, String)>,
     q_history: &mut Vec<(u64, f64)>,
 ) {
     let moves = root_move_infos(tree, config);
-    let best = moves.first().map(|m| m.uci_move.clone());
-    if let Some(bm) = &best {
-        best_move_history.push((0, bm.clone()));
+    let best = moves.first().map(|move_info| move_info.uci_move.clone());
+    match &best {
+        Some(best_move) => best_move_history.push((0, best_move.clone())),
+        None => {}
     }
-    if let Some(bm_info) = moves.first() {
-        q_history.push((0, bm_info.practical_q));
+    match moves.first() {
+        Some(best_move_info) => q_history.push((0, best_move_info.practical_q)),
+        None => {}
     }
     let tree_snap = build_tree_snapshot(tree, 10);
-    let _ = tx.send(SearchSnapshot {
+    let _ = sender.send(SearchSnapshot {
         iteration: 0,
         elapsed_secs: 0.0,
         root_moves: moves,
@@ -216,23 +227,27 @@ fn send_initial_snapshot(
 fn send_snapshot(
     tree: &SearchTree,
     config: &Config,
-    tx: &mpsc::Sender<SearchSnapshot>,
+    sender: &mpsc::Sender<SearchSnapshot>,
     iteration: u64,
     elapsed: f64,
     best_move_history: &mut Vec<(u64, String)>,
     q_history: &mut Vec<(u64, f64)>,
 ) {
     let moves = root_move_infos(tree, config);
-    let best = moves.first().map(|m| m.uci_move.clone());
+    let best = moves.first().map(|move_info| move_info.uci_move.clone());
 
-    if let Some(bm) = &best {
-        let last_move = best_move_history.last().map(|(_, m)| m);
-        if last_move != Some(bm) {
-            best_move_history.push((iteration, bm.clone()));
+    match &best {
+        Some(best_move) => {
+            let last_recorded = best_move_history.last().map(|(_, move_uci)| move_uci);
+            if last_recorded != Some(best_move) {
+                best_move_history.push((iteration, best_move.clone()));
+            }
         }
+        None => {}
     }
-    if let Some(bm_info) = moves.first() {
-        q_history.push((iteration, bm_info.practical_q));
+    match moves.first() {
+        Some(best_move_info) => q_history.push((iteration, best_move_info.practical_q)),
+        None => {}
     }
 
     let tree_snap = build_tree_snapshot(tree, 10);
@@ -248,8 +263,9 @@ fn send_snapshot(
         tree_snapshot: Some(tree_snap),
     };
 
-    if tx.send(snapshot).is_err() {
-        log::debug!("UI receiver dropped");
+    match sender.send(snapshot) {
+        Err(_) => log::debug!("UI receiver dropped"),
+        Ok(_) => {}
     }
 }
 
@@ -259,24 +275,27 @@ pub(super) fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSna
     let mut stack: Vec<(NodeId, u32)> = vec![(tree.root_id, 0)];
 
     while let Some((id, depth)) = stack.pop() {
-        if let Some(node) = tree.get(id) {
-            if node.visit_count >= min_visits || id == tree.root_id {
-                nodes.push(TreeNodeInfo {
-                    id: node.id,
-                    parent_id: node.parent,
-                    move_uci: node.move_uci.clone(),
-                    node_type: node.node_type,
-                    visit_count: node.visit_count,
-                    q_value: node.q_value(),
-                    depth,
-                });
-
-                if depth < 10 {
-                    node.children.iter().for_each(|&child_id| {
-                        stack.push((child_id, depth + 1));
+        match tree.get(id) {
+            Some(node) => {
+                if node.visit_count >= min_visits || id == tree.root_id {
+                    nodes.push(TreeNodeInfo {
+                        id: node.id,
+                        parent_id: node.parent,
+                        move_uci: node.move_uci.clone(),
+                        node_type: node.node_type,
+                        visit_count: node.visit_count,
+                        q_value: node.q_value(),
+                        depth,
                     });
+
+                    if depth < 10 {
+                        node.children.iter().for_each(|&child_id| {
+                            stack.push((child_id, depth + 1));
+                        });
+                    }
                 }
             }
+            None => {}
         }
     }
 

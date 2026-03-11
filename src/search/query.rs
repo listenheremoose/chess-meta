@@ -57,9 +57,13 @@ fn build_root_move_info(
     let q_white = child.q_value();
     let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-    let engine_pol = root.engine_policy.as_ref().and_then(|engine_policy| {
-        lookup_castling_aware(&uci_move, engine_policy).map(|policy_value| policy_value as f64)
-    });
+    let engine_pol = match root.engine_policy.as_ref() {
+        Some(engine_policy) => match lookup_castling_aware(&uci_move, engine_policy) {
+            Some(policy_value) => Some(policy_value as f64),
+            None => None,
+        },
+        None => None,
+    };
 
     let worst_case = if visits > 0 {
         worst_case_value(tree, child_id, is_white)
@@ -71,7 +75,7 @@ fn build_root_move_info(
     let delta = engine_position_value.map(|engine_value| practical_q - engine_value);
 
     Some(RootMoveInfo {
-        uci_move: uci_move,
+        uci_move,
         node_id: child_id,
         visits,
         engine_policy: engine_pol,

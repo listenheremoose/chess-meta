@@ -217,13 +217,12 @@ mod tests {
 
         let config = Config::default();
         let mut state = SearchState::new();
-        let mut e5_count = 0;
-        for _ in 0..1000 {
-            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
-            if tree.get(selected).unwrap().move_uci.as_deref() == Some("e7e5") {
-                e5_count += 1;
-            }
-        }
+        let e5_count = (0..1000)
+            .filter(|_| {
+                let selected = select_chance(&tree, NodeId(0), &config, &mut state);
+                tree.get(selected).unwrap().move_uci.as_deref() == Some("e7e5")
+            })
+            .count();
         assert!(e5_count > 950, "e5_count was {e5_count}, expected >950");
     }
 
@@ -237,13 +236,12 @@ mod tests {
 
         let config = Config::default(); // floor = 0.01
         let mut state = SearchState::new();
-        let mut d5_count = 0;
-        for _ in 0..10000 {
-            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
-            if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
-                d5_count += 1;
-            }
-        }
+        let d5_count = (0..10000)
+            .filter(|_| {
+                let selected = select_chance(&tree, NodeId(0), &config, &mut state);
+                tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5")
+            })
+            .count();
         assert!(d5_count > 30, "d5_count was {d5_count}, expected >30 (floor should help)");
     }
 
@@ -260,13 +258,12 @@ mod tests {
         config.maia_floor = 0.0;
 
         let mut state = SearchState::new();
-        let mut d5_count = 0;
-        for _ in 0..10000 {
-            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
-            if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
-                d5_count += 1;
-            }
-        }
+        let d5_count = (0..10000)
+            .filter(|_| {
+                let selected = select_chance(&tree, NodeId(0), &config, &mut state);
+                tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5")
+            })
+            .count();
         assert!(d5_count > 2500, "d5_count was {d5_count}, expected >2500 with T=3.0");
     }
 
@@ -283,13 +280,12 @@ mod tests {
         config.maia_floor = 0.01;
 
         let mut state = SearchState::new();
-        let mut d5_count = 0;
-        for _ in 0..10000 {
-            let selected = select_chance(&tree, NodeId(0), &config, &mut state);
-            if tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5") {
-                d5_count += 1;
-            }
-        }
+        let d5_count = (0..10000)
+            .filter(|_| {
+                let selected = select_chance(&tree, NodeId(0), &config, &mut state);
+                tree.get(selected).unwrap().move_uci.as_deref() == Some("d7d5")
+            })
+            .count();
         assert!(d5_count > 50, "d5_count was {d5_count}, floor should guarantee >0.5% even with sharpening");
     }
 

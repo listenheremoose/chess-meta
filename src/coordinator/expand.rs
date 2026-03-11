@@ -33,25 +33,32 @@ pub(super) fn expand_and_evaluate(
 
     let white_to_move = move_seq.is_empty() || move_seq.split_whitespace().count() % 2 == 0;
 
-    if let Some(tv) = terminal {
-        return Ok(tv);
+    match terminal {
+        Some(tv) => return Ok(tv),
+        None => {}
     }
 
     if already_expanded {
         let leaf = tree.get(leaf_id).ok_or(CoordinatorError::NodeNotFound { node_id: leaf_id })?;
-        if let Some(wdl) = leaf.wdl {
-            let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
-            return Ok(eval.value_white(config.contempt, white_to_move));
+        match leaf.wdl {
+            Some(wdl) => {
+                let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
+                return Ok(eval.value_white(config.contempt, white_to_move));
+            }
+            None => {}
         }
     }
 
     let position = PositionState::from_moves(&move_seq)
         .map_err(|e| CoordinatorError::Position { source: e, move_sequence: move_seq.clone() })?;
-    if let Some(tv) = position.terminal_value() {
-        let leaf = tree.get_mut(leaf_id).unwrap();
-        leaf.terminal_value = Some(tv);
-        leaf.expanded = true;
-        return Ok(tv);
+    match position.terminal_value() {
+        Some(tv) => {
+            let leaf = tree.get_mut(leaf_id).unwrap();
+            leaf.terminal_value = Some(tv);
+            leaf.expanded = true;
+            return Ok(tv);
+        }
+        None => {}
     }
 
     let engine_eval = get_engine_eval_cached(&epd, &move_seq, engine, cache, config, cache_hits, cache_misses)?;
@@ -89,8 +96,9 @@ pub(super) fn expand_and_evaluate(
                     new_pos.move_sequence.clone(),
                     *prior,
                 );
-                if let Some(tv) = child_terminal {
-                    tree.get_mut(child_id).unwrap().terminal_value = Some(tv);
+                match child_terminal {
+                    Some(tv) => { tree.get_mut(child_id).unwrap().terminal_value = Some(tv); }
+                    None => {}
                 }
             }
             Err(e) => {
@@ -113,18 +121,23 @@ fn get_engine_eval_cached(
     cache_hits: &mut u64,
     cache_misses: &mut u64,
 ) -> Result<EngineEval, CoordinatorError> {
-    if let Some(c) = cache {
-        if let Some((w, d, l, policy, q_values)) = c.get_engine_eval(epd) {
-            *cache_hits += 1;
-            return Ok(EngineEval { wdl: (w, d, l), policy, q_values });
-        }
+    match cache {
+        Some(cache) => match cache.get_engine_eval(epd) {
+            Some((w, d, l, policy, q_values)) => {
+                *cache_hits += 1;
+                return Ok(EngineEval { wdl: (w, d, l), policy, q_values });
+            }
+            None => {}
+        },
+        None => {}
     }
 
     *cache_misses += 1;
     let eval = engine.evaluate(move_seq, config.engine_nodes)
         .map_err(|e| CoordinatorError::Engine { source: e, move_sequence: move_seq.to_string() })?;
-    if let Some(c) = cache {
-        let _ = c.put_engine_eval(epd, eval.wdl, &eval.policy, &eval.q_values);
+    match cache {
+        Some(cache) => { let _ = cache.put_engine_eval(epd, eval.wdl, &eval.policy, &eval.q_values); }
+        None => {}
     }
     Ok(eval)
 }
@@ -136,18 +149,23 @@ fn get_maia_policy_cached(
     cache_hits: &mut u64,
     cache_misses: &mut u64,
 ) -> Result<HashMap<String, f32>, CoordinatorError> {
-    if let Some(c) = cache {
-        if let Some(cached) = c.get_maia_policy(move_seq) {
-            *cache_hits += 1;
-            return Ok(cached);
-        }
+    match cache {
+        Some(cache) => match cache.get_maia_policy(move_seq) {
+            Some(cached_policy) => {
+                *cache_hits += 1;
+                return Ok(cached_policy);
+            }
+            None => {}
+        },
+        None => {}
     }
 
     *cache_misses += 1;
     let policy = maia.predict(move_seq)
         .map_err(|e| CoordinatorError::Maia { source: e, move_sequence: move_seq.to_string() })?;
-    if let Some(c) = cache {
-        let _ = c.put_maia_policy(move_seq, &policy);
+    match cache {
+        Some(cache) => { let _ = cache.put_maia_policy(move_seq, &policy); }
+        None => {}
     }
     Ok(policy)
 }
