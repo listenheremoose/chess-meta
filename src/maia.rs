@@ -94,8 +94,9 @@ impl MaiaEngine {
             }
 
             if line.starts_with("info string") {
-                if let Some((uci_move, policy_pct, _q_value)) = parse_verbose_move_stats(line) {
-                    policy_map.insert(uci_move, policy_pct);
+                match parse_verbose_move_stats(line) {
+                    Some((uci_move, policy_pct, _q_value)) => { policy_map.insert(uci_move, policy_pct); }
+                    None => {}
                 }
             }
         }

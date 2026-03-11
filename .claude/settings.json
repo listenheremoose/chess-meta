@@ -19,7 +19,8 @@
       "Bash(grep \"pub fn title\\\\|pub fn subscription\\\\|pub fn theme\\\\|pub fn window_size\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
       "Bash(grep -A5 \"pub fn title\\\\b\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
       "Bash(grep -A10 \"pub trait TitleFn\" ~/.cargo/registry/src/*/iced-0.14.0/src/application.rs)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Read(//c/Users/me/.claude/projects/c--code-chess-meta/memory/**)"
     ]
   }
 }

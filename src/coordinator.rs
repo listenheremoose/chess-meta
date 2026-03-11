@@ -108,15 +108,21 @@ impl Coordinator {
         let root_id = tree.root_id;
         let root_epd = tree.root().epd.clone();
         let root_move_seq = tree.root().move_sequence.clone();
-        if let Some((w, d, l, policy, q_values)) = cache.get_engine_eval(&root_epd) {
-            let root = tree.get_mut(root_id).unwrap();
-            root.wdl = Some((w, d, l));
-            root.engine_policy = Some(policy);
-            root.engine_q_values = Some(q_values);
+        match cache.get_engine_eval(&root_epd) {
+            Some((w, d, l, policy, q_values)) => {
+                let root = tree.get_mut(root_id).unwrap();
+                root.wdl = Some((w, d, l));
+                root.engine_policy = Some(policy);
+                root.engine_q_values = Some(q_values);
+            }
+            None => {}
         }
-        if let Some(maia_pol) = cache.get_maia_policy(&root_move_seq) {
-            let root = tree.get_mut(root_id).unwrap();
-            root.maia_policy = Some(maia_pol);
+        match cache.get_maia_policy(&root_move_seq) {
+            Some(maia_pol) => {
+                let root = tree.get_mut(root_id).unwrap();
+                root.maia_policy = Some(maia_pol);
+            }
+            None => {}
         }
 
         let moves = root_move_infos(&tree, config);
@@ -143,20 +149,23 @@ impl Coordinator {
 
     /// Clear persisted tree data for the given move sequence.
     pub fn clear_session(&self, move_sequence: &str) {
-        if let Ok(cache) = Cache::open() {
-            let _ = cache.clear_tree(move_sequence);
+        match Cache::open() {
+            Ok(cache) => { let _ = cache.clear_tree(move_sequence); }
+            Err(_) => {}
         }
     }
 
     /// Pause/stop the search. Waits for the background thread to finish
     /// its final save before returning.
     pub fn stop(&mut self) {
-        if let Some(cancel) = &self.cancel {
-            cancel.store(true, Ordering::Relaxed);
+        match &self.cancel {
+            Some(cancel) => cancel.store(true, Ordering::Relaxed),
+            None => {}
         }
         // Wait for the background thread to complete its final DB save
-        if let Some(handle) = self.join_handle.take() {
-            let _ = handle.join();
+        match self.join_handle.take() {
+            Some(handle) => { let _ = handle.join(); }
+            None => {}
         }
         self.running = false;
         self.cancel = None;
@@ -166,22 +175,25 @@ impl Coordinator {
     /// Poll for new snapshots. Returns true if a new snapshot was received.
     pub fn poll(&mut self) -> bool {
         let mut updated = false;
-        if let Some(rx) = &self.receiver {
-            // Drain all pending snapshots, keep the latest
-            loop {
-                match rx.try_recv() {
-                    Ok(snapshot) => {
-                        self.latest_snapshot = Some(snapshot);
-                        updated = true;
-                    }
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        self.running = false;
-                        self.receiver = None;
-                        break;
+        match &self.receiver {
+            Some(rx) => {
+                // Drain all pending snapshots, keep the latest
+                loop {
+                    match rx.try_recv() {
+                        Ok(snapshot) => {
+                            self.latest_snapshot = Some(snapshot);
+                            updated = true;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            self.running = false;
+                            self.receiver = None;
+                            break;
+                        }
                     }
                 }
             }
+            None => {}
         }
         updated
     }
@@ -242,34 +254,44 @@ fn run_mcts(
         Some(c) => c.load_tree(&session_id),
         None => None,
     };
-    let mut tree = if let Some(loaded) = cached_tree {
-        log::info!("Resumed tree with {} nodes", loaded.node_count());
-        // Re-populate root eval data from engine/maia caches
-        if let Some(c) = &cache {
-            let root = loaded.root();
-            let root_id = loaded.root_id;
-            let root_epd = root.epd.clone();
-            let root_move_seq = root.move_sequence.clone();
-            let _ = root;
-            // Need mutable access — reconstruct after loading evals
-            let mut tree = loaded;
-            if let Some((w, d, l, policy, q_values)) = c.get_engine_eval(&root_epd) {
-                let root = tree.get_mut(root_id).unwrap();
-                root.wdl = Some((w, d, l));
-                root.engine_policy = Some(policy);
-                root.engine_q_values = Some(q_values);
+    let mut tree = match cached_tree {
+        Some(loaded) => {
+            log::info!("Resumed tree with {} nodes", loaded.node_count());
+            // Re-populate root eval data from engine/maia caches
+            match &cache {
+                Some(c) => {
+                    let root = loaded.root();
+                    let root_id = loaded.root_id;
+                    let root_epd = root.epd.clone();
+                    let root_move_seq = root.move_sequence.clone();
+                    let _ = root;
+                    // Need mutable access — reconstruct after loading evals
+                    let mut tree = loaded;
+                    match c.get_engine_eval(&root_epd) {
+                        Some((w, d, l, policy, q_values)) => {
+                            let root = tree.get_mut(root_id).unwrap();
+                            root.wdl = Some((w, d, l));
+                            root.engine_policy = Some(policy);
+                            root.engine_q_values = Some(q_values);
+                        }
+                        None => {}
+                    }
+                    match c.get_maia_policy(&root_move_seq) {
+                        Some(maia_pol) => {
+                            let root = tree.get_mut(root_id).unwrap();
+                            root.maia_policy = Some(maia_pol);
+                        }
+                        None => {}
+                    }
+                    tree
+                }
+                None => loaded
             }
-            if let Some(maia_pol) = c.get_maia_policy(&root_move_seq) {
-                let root = tree.get_mut(root_id).unwrap();
-                root.maia_policy = Some(maia_pol);
-            }
-            tree
-        } else {
-            loaded
         }
-    } else {
-        // Root is always MAX — we're deciding our move regardless of which color we play
-        SearchTree::new(position.epd.clone(), position.move_sequence.clone(), NodeType::Max)
+        None => {
+            // Root is always MAX — we're deciding our move regardless of which color we play
+            SearchTree::new(position.epd.clone(), position.move_sequence.clone(), NodeType::Max)
+        }
     };
 
     log::info!(
@@ -295,11 +317,13 @@ fn run_mcts(
             Some(m) => Some(m.uci_move.clone()),
             None => None,
         };
-        if let Some(ref bm) = best {
-            best_move_history.push((0, bm.clone()));
+        match &best {
+            Some(bm) => best_move_history.push((0, bm.clone())),
+            None => {}
         }
-        if let Some(bm_info) = moves.first() {
-            q_history.push((0, bm_info.practical_q));
+        match moves.first() {
+            Some(bm_info) => q_history.push((0, bm_info.practical_q)),
+            None => {}
         }
         let tree_snap = build_tree_snapshot(&tree, 10);
         let snapshot = SearchSnapshot {
@@ -369,11 +393,12 @@ fn run_mcts(
 
         // 4. Periodic flush to SQLite
         if iteration % config.flush_interval as u64 == 0 {
-            if let Some(c) = &cache {
-                match c.save_tree(&tree, &session_id) {
+            match &cache {
+                Some(c) => match c.save_tree(&tree, &session_id) {
                     Ok(()) => log::debug!("Flushed tree ({} nodes) at iteration {iteration}", tree.node_count()),
                     Err(e) => log::error!("Failed to flush tree: {e}"),
-                }
+                },
+                None => {}
             }
         }
 
@@ -387,17 +412,21 @@ fn run_mcts(
                 None => None,
             };
 
-            if let Some(ref bm) = best {
-                let last_move = match best_move_history.last() {
-                    Some((_, m)) => Some(m),
-                    None => None,
-                };
-                if last_move != Some(bm) {
-                    best_move_history.push((iteration, bm.clone()));
+            match &best {
+                Some(bm) => {
+                    let last_move = match best_move_history.last() {
+                        Some((_, m)) => Some(m),
+                        None => None,
+                    };
+                    if last_move != Some(bm) {
+                        best_move_history.push((iteration, bm.clone()));
+                    }
                 }
+                None => {}
             }
-            if let Some(bm_info) = moves.first() {
-                q_history.push((iteration, bm_info.practical_q));
+            match moves.first() {
+                Some(bm_info) => q_history.push((iteration, bm_info.practical_q)),
+                None => {}
             }
 
             let tree_snap = build_tree_snapshot(&tree, 10); // min 10 visits for tree view
@@ -436,11 +465,12 @@ fn run_mcts(
     );
 
     // Final save — persist tree state for resumption
-    if let Some(c) = &cache {
-        match c.save_tree(&tree, &session_id) {
+    match &cache {
+        Some(c) => match c.save_tree(&tree, &session_id) {
             Ok(()) => log::info!("Final save: {} nodes for session '{session_id}'", tree.node_count()),
             Err(e) => log::error!("Final save failed: {e}"),
-        }
+        },
+        None => {}
     }
 }
 
@@ -474,26 +504,33 @@ fn expand_and_evaluate(
     };
 
     // Check for terminal
-    if let Some(tv) = terminal {
-        return Ok(tv);
+    match terminal {
+        Some(tv) => return Ok(tv),
+        None => {}
     }
 
     // Already expanded but no children (all candidates filtered out) — reuse cached value
     if already_expanded {
         let leaf = tree.get(leaf_id).ok_or("Node not found")?;
-        if let Some(wdl) = leaf.wdl {
-            let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
-            return Ok(eval.value_white(config.contempt, white_to_move));
+        match leaf.wdl {
+            Some(wdl) => {
+                let eval = EngineEval { wdl, policy: Default::default(), q_values: Default::default() };
+                return Ok(eval.value_white(config.contempt, white_to_move));
+            }
+            None => {}
         }
     }
 
     // Check terminal via position
     let position = PositionState::from_moves(&move_seq)?;
-    if let Some(tv) = position.terminal_value() {
-        let leaf = tree.get_mut(leaf_id).unwrap();
-        leaf.terminal_value = Some(tv);
-        leaf.expanded = true;
-        return Ok(tv);
+    match position.terminal_value() {
+        Some(tv) => {
+            let leaf = tree.get_mut(leaf_id).unwrap();
+            leaf.terminal_value = Some(tv);
+            leaf.expanded = true;
+            return Ok(tv);
+        }
+        None => {}
     }
 
     // Get engine eval (check cache first)
@@ -501,21 +538,20 @@ fn expand_and_evaluate(
         Some(c) => c.get_engine_eval(&epd),
         None => None,
     };
-    let engine_eval = if let Some(cached) = cached_engine {
-        let (w, d, l, policy, q_values) = cached;
-        *cache_hits += 1;
-        EngineEval {
-            wdl: (w, d, l),
-            policy,
-            q_values,
+    let engine_eval = match cached_engine {
+        Some((w, d, l, policy, q_values)) => {
+            *cache_hits += 1;
+            EngineEval { wdl: (w, d, l), policy, q_values }
         }
-    } else {
-        *cache_misses += 1;
-        let eval = engine.evaluate(&move_seq, config.engine_nodes)?;
-        if let Some(c) = cache {
-            let _ = c.put_engine_eval(&epd, eval.wdl, &eval.policy, &eval.q_values);
+        None => {
+            *cache_misses += 1;
+            let eval = engine.evaluate(&move_seq, config.engine_nodes)?;
+            match cache {
+                Some(c) => { let _ = c.put_engine_eval(&epd, eval.wdl, &eval.policy, &eval.q_values); }
+                None => {}
+            }
+            eval
         }
-        eval
     };
 
     // Get Maia prediction (check cache first)
@@ -523,16 +559,20 @@ fn expand_and_evaluate(
         Some(c) => c.get_maia_policy(&move_seq),
         None => None,
     };
-    let maia_policy = if let Some(cached) = cached_maia {
-        *cache_hits += 1;
-        cached
-    } else {
-        *cache_misses += 1;
-        let policy = maia.predict(&move_seq)?;
-        if let Some(c) = cache {
-            let _ = c.put_maia_policy(&move_seq, &policy);
+    let maia_policy = match cached_maia {
+        Some(cached) => {
+            *cache_hits += 1;
+            cached
         }
-        policy
+        None => {
+            *cache_misses += 1;
+            let policy = maia.predict(&move_seq)?;
+            match cache {
+                Some(c) => { let _ = c.put_maia_policy(&move_seq, &policy); }
+                None => {}
+            }
+            policy
+        }
     };
 
     // Compute value from White's perspective (flip WDL when Black to move)
@@ -570,8 +610,9 @@ fn expand_and_evaluate(
                     new_pos.move_sequence.clone(),
                     *prior,
                 );
-                if let Some(tv) = child_terminal {
-                    tree.get_mut(child_id).unwrap().terminal_value = Some(tv);
+                match child_terminal {
+                    Some(tv) => tree.get_mut(child_id).unwrap().terminal_value = Some(tv),
+                    None => {}
                 }
             }
             Err(e) => {
@@ -591,25 +632,28 @@ fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSnapshot {
     let mut stack: Vec<(NodeId, u32)> = vec![(tree.root_id, 0)];
 
     while let Some((id, depth)) = stack.pop() {
-        if let Some(node) = tree.get(id) {
-            if node.visit_count >= min_visits || id == tree.root_id {
-                nodes.push(TreeNodeInfo {
-                    id: node.id,
-                    parent_id: node.parent,
-                    move_uci: node.move_uci.clone(),
-                    node_type: node.node_type,
-                    visit_count: node.visit_count,
-                    q_value: node.q_value(),
-                    depth,
-                });
-
-                if depth < 10 {
-                    // Max depth for UI
-                    node.children.iter().for_each(|&child_id| {
-                        stack.push((child_id, depth + 1));
+        match tree.get(id) {
+            Some(node) => {
+                if node.visit_count >= min_visits || id == tree.root_id {
+                    nodes.push(TreeNodeInfo {
+                        id: node.id,
+                        parent_id: node.parent,
+                        move_uci: node.move_uci.clone(),
+                        node_type: node.node_type,
+                        visit_count: node.visit_count,
+                        q_value: node.q_value(),
+                        depth,
                     });
+
+                    if depth < 10 {
+                        // Max depth for UI
+                        node.children.iter().for_each(|&child_id| {
+                            stack.push((child_id, depth + 1));
+                        });
+                    }
                 }
             }
+            None => {}
         }
     }
 

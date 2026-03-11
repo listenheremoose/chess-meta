@@ -66,16 +66,19 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
                 colors::BACKGROUND,
             );
 
-            let Some(snapshot) = &self.snapshot else {
-                let text = Text {
-                    content: "No search data".to_string(),
-                    position: Point::new(bounds.width / 2.0, bounds.height / 2.0),
-                    color: colors::TEXT_DIM,
-                    size: iced::Pixels(14.0),
-                    ..Text::default()
-                };
-                frame.fill_text(text);
-                return;
+            let snapshot = match &self.snapshot {
+                Some(s) => s,
+                None => {
+                    let text = Text {
+                        content: "No search data".to_string(),
+                        position: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                        color: colors::TEXT_DIM,
+                        size: iced::Pixels(14.0),
+                        ..Text::default()
+                    };
+                    frame.fill_text(text);
+                    return;
+                }
             };
 
             if snapshot.nodes.is_empty() {
@@ -125,19 +128,20 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
             visible.iter()
                 .filter_map(|n| n.parent_id.map(|pid| (n, pid)))
                 .for_each(|(n, parent_id)| {
-                    if let (Some(&child_pos), Some(&parent_pos)) =
-                        (positions.get(&n.id), positions.get(&parent_id))
-                    {
-                        let edge = Path::line(parent_pos, child_pos);
-                        frame.stroke(
-                            &edge,
-                            Stroke::default()
-                                .with_color(Color {
-                                    a: 0.3,
-                                    ..colors::TEXT_DIM
-                                })
-                                .with_width(1.0),
-                        );
+                    match (positions.get(&n.id), positions.get(&parent_id)) {
+                        (Some(&child_pos), Some(&parent_pos)) => {
+                            let edge = Path::line(parent_pos, child_pos);
+                            frame.stroke(
+                                &edge,
+                                Stroke::default()
+                                    .with_color(Color {
+                                        a: 0.3,
+                                        ..colors::TEXT_DIM
+                                    })
+                                    .with_width(1.0),
+                            );
+                        }
+                        _ => {}
                     }
                 });
 
@@ -154,10 +158,9 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
                     // Color by Q value: green (good for us) to red (bad)
                     let q = n.q_value as f32;
-                    let node_color = if n.node_type == NodeType::Max {
-                        lerp_color(colors::RED, colors::GREEN, q)
-                    } else {
-                        lerp_color(colors::RED, colors::ORANGE, q)
+                    let node_color = match n.node_type {
+                        NodeType::Max => lerp_color(colors::RED, colors::GREEN, q),
+                        NodeType::Chance => lerp_color(colors::RED, colors::ORANGE, q),
                     };
 
                     match n.node_type {
@@ -167,15 +170,18 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
 
                     // Label for nodes with enough visits
                     if n.visit_count as f32 > max_visits * 0.05 {
-                        if let Some(ref uci) = n.move_uci {
-                            let label = Text {
-                                content: uci.clone(),
-                                position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
-                                color: colors::TEXT,
-                                size: iced::Pixels(10.0),
-                                ..Text::default()
-                            };
-                            frame.fill_text(label);
+                        match &n.move_uci {
+                            Some(uci) => {
+                                let label = Text {
+                                    content: uci.clone(),
+                                    position: Point::new(pos.x, pos.y + size / 2.0 + 2.0),
+                                    color: colors::TEXT,
+                                    size: iced::Pixels(10.0),
+                                    ..Text::default()
+                                };
+                                frame.fill_text(label);
+                            }
+                            None => {}
                         }
                     }
                 });

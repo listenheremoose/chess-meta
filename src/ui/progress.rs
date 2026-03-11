@@ -52,8 +52,9 @@ impl<'a> canvas::Program<Message> for ProgressProgram<'a> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             frame.fill_rectangle(Point::ORIGIN, bounds.size(), colors::SURFACE);
 
-            let Some(snapshot) = &self.snapshot else {
-                return;
+            let snapshot = match &self.snapshot {
+                Some(s) => s,
+                None => return,
             };
 
             let half_w = bounds.width / 2.0;
@@ -119,24 +120,27 @@ fn draw_best_move_timeline(
     });
 
     // Last segment to current iteration
-    if let Some(last) = history.last() {
-        let start_x = last.0 as f32 / max_iter * width;
-        let color = move_colors[(history.len() - 1) % move_colors.len()];
-        frame.fill_rectangle(
-            Point::new(start_x, band_y),
-            Size::new(width - start_x, band_h),
-            color,
-        );
+    match history.last() {
+        Some(last) => {
+            let start_x = last.0 as f32 / max_iter * width;
+            let color = move_colors[(history.len() - 1) % move_colors.len()];
+            frame.fill_rectangle(
+                Point::new(start_x, band_y),
+                Size::new(width - start_x, band_h),
+                color,
+            );
 
-        // Label the current best move
-        let label = Text {
-            content: last.1.clone(),
-            position: Point::new(start_x + 2.0, band_y + 2.0),
-            color: Color::WHITE,
-            size: iced::Pixels(11.0),
-            ..Text::default()
-        };
-        frame.fill_text(label);
+            // Label the current best move
+            let label = Text {
+                content: last.1.clone(),
+                position: Point::new(start_x + 2.0, band_y + 2.0),
+                color: Color::WHITE,
+                size: iced::Pixels(11.0),
+                ..Text::default()
+            };
+            frame.fill_text(label);
+        }
+        None => {}
     }
 }
 
@@ -198,14 +202,17 @@ fn draw_q_sparkline(
     });
 
     // Current Q value label
-    if let Some(last) = q_history.last() {
-        let q_label = Text {
-            content: format!("{:.3}", last.1),
-            position: Point::new(start_x + spark_width + 4.0, spark_y + spark_h / 2.0),
-            color: colors::TEXT,
-            size: iced::Pixels(11.0),
-            ..Text::default()
-        };
-        frame.fill_text(q_label);
+    match q_history.last() {
+        Some(last) => {
+            let q_label = Text {
+                content: format!("{:.3}", last.1),
+                position: Point::new(start_x + spark_width + 4.0, spark_y + spark_h / 2.0),
+                color: colors::TEXT,
+                size: iced::Pixels(11.0),
+                ..Text::default()
+            };
+            frame.fill_text(q_label);
+        }
+        None => {}
     }
 }

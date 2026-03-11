@@ -60,14 +60,16 @@ impl App {
         match message {
             Message::MoveInputChanged(input) => self.move_input = input,
             Message::StartSearch => return self.handle_start_search(),
-            Message::PauseSearch => {
-                log::info!("Search paused");
-                self.coordinator.stop();
-            }
+            Message::PauseSearch => self.handle_pause_search(),
             Message::ResetSearch => self.handle_reset_search(),
             Message::Tick => self.handle_tick(),
         }
         Task::none()
+    }
+
+    fn handle_pause_search(&mut self) {
+        log::info!("Search paused");
+        self.coordinator.stop();
     }
 
     fn handle_start_search(&mut self) -> Task<Message> {
@@ -101,8 +103,9 @@ impl App {
 
             // Auto-select best move if none selected
             if self.selected_move.is_none() {
-                if let Some(snap) = &self.coordinator.latest_snapshot {
-                    self.selected_move = snap.best_move.clone();
+                match &self.coordinator.latest_snapshot {
+                    Some(snap) => self.selected_move = snap.best_move.clone(),
+                    None => {}
                 }
             }
         }

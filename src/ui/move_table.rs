@@ -76,8 +76,9 @@ pub fn view<'a>(
 
         // Detail view for selected move
         if is_selected {
-            if let Some(detail) = move_detail(info) {
-                rows.push(detail);
+            match move_detail(info) {
+                Some(detail) => rows.push(detail),
+                None => {}
             }
         }
     });
@@ -106,17 +107,20 @@ fn move_detail<'a>(info: &RootMoveInfo) -> Option<Element<'a, Message>> {
             .into(),
     );
 
-    if let Some((w, d, l)) = info.wdl {
-        let total = (w + d + l) as f64;
-        if total > 0.0 {
-            let wdl_str = format!(
-                "WDL: {:.1}% / {:.1}% / {:.1}%",
-                w as f64 / total * 100.0,
-                d as f64 / total * 100.0,
-                l as f64 / total * 100.0,
-            );
-            details.push(text(wdl_str).size(12).into());
+    match info.wdl {
+        Some((w, d, l)) => {
+            let total = (w + d + l) as f64;
+            if total > 0.0 {
+                let wdl_str = format!(
+                    "WDL: {:.1}% / {:.1}% / {:.1}%",
+                    w as f64 / total * 100.0,
+                    d as f64 / total * 100.0,
+                    l as f64 / total * 100.0,
+                );
+                details.push(text(wdl_str).size(12).into());
+            }
         }
+        None => {}
     }
 
     let detail_col = Column::with_children(details)

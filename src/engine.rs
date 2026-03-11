@@ -133,12 +133,14 @@ impl Engine {
             }
 
             if line.starts_with("info string") {
-                if let Some((uci_move, policy_pct, q_value)) = parse_verbose_move_stats(line) {
-                    verbose_stats.insert(uci_move, (policy_pct, q_value));
+                match parse_verbose_move_stats(line) {
+                    Some((uci_move, policy_pct, q_value)) => { verbose_stats.insert(uci_move, (policy_pct, q_value)); }
+                    None => {}
                 }
             } else if line.starts_with("info") && line.contains("wdl") {
-                if let Some(parsed_wdl) = parse_wdl(line) {
-                    wdl = parsed_wdl;
+                match parse_wdl(line) {
+                    Some(parsed_wdl) => wdl = parsed_wdl,
+                    None => {}
                 }
             }
         }
