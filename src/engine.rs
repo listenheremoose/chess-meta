@@ -146,9 +146,12 @@ impl Engine {
 
     fn read_line(&mut self) -> Result<String, String> {
         let mut line = String::new();
-        self.reader
+        let bytes = self.reader
             .read_line(&mut line)
             .map_err(|e| format!("Failed to read from engine: {e}"))?;
+        if bytes == 0 {
+            return Err("Engine process terminated unexpectedly".to_string());
+        }
         Ok(line.trim().to_string())
     }
 

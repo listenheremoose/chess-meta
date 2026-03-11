@@ -9,10 +9,12 @@ pub struct MaiaEngine {
     child: Child,
     stdin: ChildStdin,
     reader: BufReader<std::process::ChildStdout>,
+    query_count: u32,
+    ucinewgame_interval: u32,
 }
 
 impl MaiaEngine {
-    pub fn new(lc0_path: &str, maia_weights_path: &str) -> Result<Self, String> {
+    pub fn new(lc0_path: &str, maia_weights_path: &str, ucinewgame_interval: u32) -> Result<Self, String> {
         let mut cmd = Command::new(lc0_path);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -34,6 +36,8 @@ impl MaiaEngine {
             child,
             stdin,
             reader,
+            query_count: 0,
+            ucinewgame_interval,
         };
 
         engine.send("uci")?;
@@ -56,6 +60,14 @@ impl MaiaEngine {
     /// `move_sequence` must be the full move sequence from game start (Maia requires history).
     /// Returns map of UCI move -> policy percentage (0-100).
     pub fn predict(&mut self, move_sequence: &str) -> Result<HashMap<String, f32>, String> {
+        // Periodically send ucinewgame to clear internal state
+        self.query_count += 1;
+        if self.query_count % self.ucinewgame_interval == 0 {
+            self.send("ucinewgame")?;
+            self.send("isready")?;
+            self.wait_for("readyok")?;
+        }
+
         let position_cmd = if move_sequence.is_empty() {
             "position startpos".to_string()
         } else {
@@ -92,9 +104,12 @@ impl MaiaEngine {
 
     fn read_line(&mut self) -> Result<String, String> {
         let mut line = String::new();
-        self.reader
+        let bytes = self.reader
             .read_line(&mut line)
             .map_err(|e| format!("Failed to read from Maia engine: {e}"))?;
+        if bytes == 0 {
+            return Err("Maia engine process terminated unexpectedly".to_string());
+        }
         Ok(line.trim().to_string())
     }
 

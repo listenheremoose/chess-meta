@@ -31,6 +31,8 @@ pub struct Node {
 
     /// Engine policy (percentage, 0-100) per move from this position.
     pub engine_policy: Option<HashMap<String, f32>>,
+    /// Engine Q values per move from this position.
+    pub engine_q_values: Option<HashMap<String, f32>>,
     /// Maia policy (percentage, 0-100) per move from this position.
     pub maia_policy: Option<HashMap<String, f32>>,
     /// WDL from engine eval.
@@ -61,6 +63,7 @@ impl Node {
             children: Vec::new(),
             expanded: false,
             engine_policy: None,
+            engine_q_values: None,
             maia_policy: None,
             wdl: None,
             terminal_value: None,
@@ -229,18 +232,20 @@ fn select_chance(tree: &SearchTree, node_id: u64, config: &Config) -> u64 {
     // Build distribution from priors (already set from Maia during expansion)
     let mut probs: Vec<f64> = children
         .iter()
-        .map(|&cid| {
-            let child = &tree.nodes[&cid];
-            child.prior.max(config.maia_floor)
-        })
+        .map(|&cid| tree.nodes[&cid].prior)
         .collect();
 
-    // Apply temperature
+    // Step 2: Apply temperature (before floor, per docs)
     if (config.maia_temperature - 1.0).abs() > 1e-6 {
         let inv_t = 1.0 / config.maia_temperature;
         for p in &mut probs {
             *p = p.powf(inv_t);
         }
+    }
+
+    // Step 3: Apply exploration floor (after temperature, guarantees minimum probability)
+    for p in &mut probs {
+        *p = p.max(config.maia_floor);
     }
 
     // Normalize
@@ -376,14 +381,10 @@ pub fn best_root_move(tree: &SearchTree, config: &Config) -> Option<RootMoveInfo
             let q_white = child.q_value();
             let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-            // Engine Q for this move (from root's engine eval)
-            let engine_q = root
-                .engine_policy
-                .as_ref()
-                .and_then(|_| root.wdl.map(|wdl| {
-                    let v = wdl.0 as f64 / 1000.0 + config.contempt * wdl.1 as f64 / 1000.0;
-                    if is_white { v } else { 1.0 - v }
-                }));
+            // Per-move engine Q: lc0 Q in [-1, 1] → [0, 1]
+            let engine_q = root.engine_q_values.as_ref().and_then(|q_vals| {
+                lookup_castling_aware(&uci, q_vals).map(|q| (q as f64 + 1.0) / 2.0)
+            });
 
             // Worst-case: minimum Q among likely opponent responses
             let worst_case = worst_case_value(tree, child_id, is_white);
@@ -431,9 +432,10 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
             let q_white = child.q_value();
             let q_stm = if is_white { q_white } else { 1.0 - q_white };
 
-            let engine_q = root.wdl.map(|wdl| {
-                let v = wdl.0 as f64 / 1000.0 + config.contempt * wdl.1 as f64 / 1000.0;
-                if is_white { v } else { 1.0 - v }
+            // Per-move engine Q from root's engine eval.
+            // lc0 Q is in [-1, 1] (side-to-move perspective); convert to [0, 1].
+            let engine_q = root.engine_q_values.as_ref().and_then(|q_vals| {
+                lookup_castling_aware(&uci, q_vals).map(|q| (q as f64 + 1.0) / 2.0)
             });
 
             let worst_case = if visits > 0 {
@@ -489,13 +491,13 @@ fn worst_case_value(tree: &SearchTree, node_id: u64, is_white: bool) -> f64 {
         return if is_white { q } else { 1.0 - q };
     }
 
-    // Look at opponent response children (CHANCE nodes have children representing our next move)
+    // Worst-case among opponent responses with >10% Maia probability (prior > 0.10)
     let mut worst = f64::MAX;
     let mut any_visited = false;
 
     for &child_id in &node.children {
         let child = &tree.nodes[&child_id];
-        if child.visit_count > 0 {
+        if child.visit_count > 0 && child.prior > 0.10 {
             any_visited = true;
             let child_q_stm = if is_white {
                 child.q_value()

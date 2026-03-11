@@ -150,7 +150,7 @@ fn run_mcts(
         }
     };
 
-    let mut maia = match MaiaEngine::new(&config.lc0_path, &config.maia_weights_path) {
+    let mut maia = match MaiaEngine::new(&config.lc0_path, &config.maia_weights_path, config.ucinewgame_interval) {
         Ok(m) => m,
         Err(e) => {
             log::error!("Failed to start Maia: {e}");
@@ -162,11 +162,8 @@ fn run_mcts(
     let cache = Cache::open().ok();
 
     // Initialize search tree
-    let root_type = if position.turn() == shakmaty::Color::White {
-        NodeType::Max
-    } else {
-        NodeType::Chance
-    };
+    // Root is always MAX — we're deciding our move regardless of which color we play
+    let root_type = NodeType::Max;
     let mut tree = SearchTree::new(position.epd.clone(), position.move_sequence.clone(), root_type);
 
     let start_time = Instant::now();
@@ -246,19 +243,28 @@ fn expand_and_evaluate(
     maia: &mut MaiaEngine,
     cache: Option<&Cache>,
 ) -> Result<f64, String> {
-    let (epd, move_seq, node_type, terminal) = {
+    let (epd, move_seq, node_type, terminal, already_expanded) = {
         let leaf = tree.get(leaf_id).ok_or("Node not found")?;
         (
             leaf.epd.clone(),
             leaf.move_sequence.clone(),
             leaf.node_type,
             leaf.terminal_value,
+            leaf.expanded,
         )
     };
 
     // Check for terminal
     if let Some(tv) = terminal {
         return Ok(tv);
+    }
+
+    // Already expanded but no children (all candidates filtered out) — reuse cached value
+    if already_expanded {
+        let leaf = tree.get(leaf_id).ok_or("Node not found")?;
+        if let Some(wdl) = leaf.wdl {
+            return Ok(wdl.0 as f64 / 1000.0 + config.contempt * wdl.1 as f64 / 1000.0);
+        }
     }
 
     // Check terminal via position
@@ -304,6 +310,7 @@ fn expand_and_evaluate(
     {
         let leaf = tree.get_mut(leaf_id).unwrap();
         leaf.engine_policy = Some(engine_eval.policy.clone());
+        leaf.engine_q_values = Some(engine_eval.q_values.clone());
         leaf.maia_policy = Some(maia_policy.clone());
         leaf.wdl = Some(engine_eval.wdl);
     }
