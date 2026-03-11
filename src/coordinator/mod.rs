@@ -27,6 +27,8 @@ pub struct SearchSnapshot {
 #[derive(Debug, Clone)]
 pub struct TreeSnapshot {
     pub nodes: Vec<TreeNodeInfo>,
+    /// True if White is the side we're searching for (i.e., White is to move at the root).
+    pub root_is_white: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -313,5 +313,13 @@ pub(super) fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSna
         }
     }
 
-    TreeSnapshot { nodes }
+    let root_is_white = tree
+        .root()
+        .epd
+        .split_whitespace()
+        .nth(1)
+        .map(|color| color == "w")
+        .unwrap_or(true);
+
+    TreeSnapshot { nodes, root_is_white }
 }

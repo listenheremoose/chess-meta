@@ -156,11 +156,13 @@ impl<'a> canvas::Program<Message> for TreeViewProgram<'a> {
                 .for_each(|(node, pos)| {
                     let size = 4.0 + 16.0 * (node.visit_count as f32 / max_visits).sqrt();
 
-                    // Color by Q value: green (good for us) to red (bad)
-                    let q_value = node.q_value as f32;
+                    // Color by Q value: green (good for us) to red (bad).
+                    // Q is stored from White's perspective, so flip when Black is playing.
+                    let q_raw = node.q_value as f32;
+                    let q_display = if snapshot.root_is_white { q_raw } else { 1.0 - q_raw };
                     let node_color = match node.node_type {
-                        NodeType::Max => lerp_color(colors::RED, colors::GREEN, q_value),
-                        NodeType::Chance => lerp_color(colors::RED, colors::ORANGE, q_value),
+                        NodeType::Max => lerp_color(colors::RED, colors::GREEN, q_display),
+                        NodeType::Chance => lerp_color(colors::RED, colors::ORANGE, q_display),
                     };
 
                     match node.node_type {
