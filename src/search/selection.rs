@@ -30,37 +30,6 @@ pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> (N
     }
 }
 
-/// Like `select`, but also returns the path from root to leaf (inclusive).
-/// Used for batched MCTS with virtual loss.
-pub fn select_with_path(
-    tree: &SearchTree,
-    config: &Config,
-    state: &mut SearchState,
-) -> (NodeId, u32, Vec<NodeId>) {
-    let mut current = tree.root_id;
-    let mut depth = 0u32;
-    let mut path = vec![current];
-
-    loop {
-        let node = &tree.nodes[current.index()];
-
-        if !node.expanded || node.children.is_empty() {
-            return (current, depth, path);
-        }
-
-        match node.node_type {
-            NodeType::Max => {
-                current = select_puct(tree, current, config, depth);
-            }
-            NodeType::Chance => {
-                current = select_chance(tree, current, config, state);
-            }
-        }
-        path.push(current);
-        depth += 1;
-    }
-}
-
 /// PUCT selection at a MAX node. Picks the child with the highest UCB score,
 /// converting stored White-perspective Q values to side-to-move perspective.
 fn select_puct(tree: &SearchTree, node_id: NodeId, config: &Config, depth: u32) -> NodeId {

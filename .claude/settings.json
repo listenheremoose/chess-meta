@@ -31,10 +31,7 @@
       "Bash(wc -l c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
       "Bash(grep -n Self:: c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
       "Bash(grep -n \"TODO\\\\|FIXME\" c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
-      "Bash(grep -n impl.*Self c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)",
-      "WebFetch(domain:ort.pyke.io)",
-      "Bash(curl -sL \"https://raw.githubusercontent.com/LeelaChessZero/lc0/master/src/neural/encoder.h\")",
-      "Bash(curl -sL \"https://raw.githubusercontent.com/LeelaChessZero/lc0/master/src/neural/network.h\")"
+      "Bash(grep -n impl.*Self c:/code/chess-meta/src/*.rs c:/code/chess-meta/src/*/*.rs)"
     ]
   }
 }

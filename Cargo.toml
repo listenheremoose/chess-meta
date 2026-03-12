@@ -2,7 +2,6 @@
 name = "chess-meta"
 version = "0.1.0"
 edition = "2024"
-default-run = "chess-meta"
 
 [dependencies]
 iced = { version = "=0.14.0", features = ["canvas", "tokio"] }
@@ -14,12 +13,6 @@ rand = "=0.10.0"
 toml = "=1.0.6"
 log = "=0.4.29"
 simplelog = "=0.12.2"
-ort = { version = "=2.0.0-rc.12", features = ["tls-native"] }
-ndarray = "=0.16.1"
-
-[[bin]]
-name = "bench_backend"
-path = "src/bin/bench_backend.rs"
 
 [dev-dependencies]
 criterion = { version = "=0.8.2", features = ["html_reports"] }

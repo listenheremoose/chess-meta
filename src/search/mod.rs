@@ -206,11 +206,11 @@ mod candidates;
 mod query;
 mod selection;
 
-pub use backprop::{backpropagate, apply_virtual_loss, revert_virtual_loss};
+pub use backprop::backpropagate;
 pub use candidates::{candidate_moves_chance, candidate_moves_max};
 #[allow(unused_imports)] // Used by integration tests (separate crate, invisible to lint)
 pub use query::{best_root_move, root_move_infos, RootMoveInfo};
-pub use selection::{select, select_with_path};
+pub use selection::select;
 
 #[cfg(test)]
 mod test_helpers;

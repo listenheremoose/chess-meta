@@ -9,10 +9,6 @@ pub struct Config {
     pub lc0_path: String,
     pub engine_weights_path: String,
     pub maia_weights_path: String,
-    /// Path to engine weights in ONNX format (bypasses lc0 process).
-    pub engine_onnx_path: String,
-    /// Path to Maia weights in ONNX format (bypasses lc0 process).
-    pub maia_onnx_path: String,
 
     // ── PUCT / Exploration ──────────────────────────────────────────────
     pub cpuct_init: f64,
@@ -55,11 +51,6 @@ pub struct Config {
     pub nn_cache_size_mb: u32,
     pub ucinewgame_interval: u32,
 
-    // ── Batching ──────────────────────────────────────────────────────
-    /// Number of leaves to select and evaluate in parallel per batch.
-    /// Only used with ONNX backend. Higher = better GPU utilization.
-    pub batch_size: usize,
-
     // ── Persistence ────────────────────────────────────────────────────
     pub flush_interval: u32,
 }
@@ -70,8 +61,6 @@ impl Default for Config {
             lc0_path: String::new(),
             engine_weights_path: String::new(),
             maia_weights_path: String::new(),
-            engine_onnx_path: String::new(),
-            maia_onnx_path: String::new(),
 
             cpuct_init: 10.0,
             cpuct_base: 19652.0,
@@ -100,8 +89,6 @@ impl Default for Config {
             nn_cache_size_mb: 512,
             ucinewgame_interval: 500,
 
-            batch_size: 2048,
-
             flush_interval: 100,
         }
     }
@@ -113,11 +100,6 @@ impl Config {
         !self.lc0_path.is_empty()
             && !self.engine_weights_path.is_empty()
             && !self.maia_weights_path.is_empty()
-    }
-
-    /// Returns true if ONNX paths are configured (direct NN inference mode).
-    pub fn onnx_configured(&self) -> bool {
-        !self.engine_onnx_path.is_empty() && !self.maia_onnx_path.is_empty()
     }
 
     /// Load config from the standard settings file, or return defaults.
@@ -166,7 +148,7 @@ mod tests {
         assert!((config.cpuct_factor - 1.0).abs() < 0.001);
         assert!((config.cpuct_depth_decay - 1.0).abs() < 0.001);
         assert!((config.fpu_reduction - 0.3).abs() < 0.001);
-        assert!((config.alpha - 0.3).abs() < 0.001);
+        assert!((config.alpha - 0.7).abs() < 0.001);
         assert!((config.maia_temperature - 1.0).abs() < 0.001);
         assert!((config.maia_floor - 0.01).abs() < 0.001);
         assert!((config.maia_min_prob - 0.001).abs() < 0.0001);

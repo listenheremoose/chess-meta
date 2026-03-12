@@ -6,24 +6,14 @@ use crate::cache::Cache;
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::maia::MaiaEngine;
-use crate::nn::NNEvaluator;
 use crate::position::PositionState;
 use crate::search::{
     NodeId, NodeType, SearchState, SearchTree,
-    apply_virtual_loss, backpropagate, revert_virtual_loss, root_move_infos,
-    select, select_with_path,
+    backpropagate, root_move_infos, select,
 };
 
 use super::{CoordinatorError, SearchSnapshot, TreeNodeInfo, TreeSnapshot};
-use super::expand::{EvalBackend, LeafPrep, apply_eval_and_expand, expand_and_evaluate, prepare_leaf};
-
-/// A leaf selected for batch evaluation, with its path for virtual loss management.
-struct PendingLeaf {
-    leaf_id: NodeId,
-    depth: u32,
-    path: Vec<NodeId>,
-    prep: LeafPrep,
-}
+use super::expand::expand_and_evaluate;
 
 /// Main MCTS loop running in a background thread.
 pub(super) fn run_mcts(
@@ -37,8 +27,8 @@ pub(super) fn run_mcts(
         Err(e) => { log::error!("Invalid position: {e}"); return; }
     };
 
-    let mut backend = match init_backend(&config) {
-        Ok(b) => b,
+    let (mut engine, mut maia) = match init_engines(&config) {
+        Ok(pair) => pair,
         Err(e) => { log::error!("{e}"); return; }
     };
 
@@ -47,13 +37,10 @@ pub(super) fn run_mcts(
 
     let mut tree = load_or_create_tree(cache.as_ref(), &session_id, &position, &config);
 
-    let use_batching = matches!(&backend, EvalBackend::Onnx { .. }) && config.batch_size > 1;
-
     log::info!(
-        "Search started position={} max_nodes={} batch_size={}",
+        "Search started position={} max_nodes={}",
         if move_sequence.is_empty() { "startpos" } else { &move_sequence },
-        config.max_nodes,
-        if use_batching { config.batch_size } else { 1 },
+        config.max_nodes
     );
 
     let start_time = Instant::now();
@@ -69,156 +56,35 @@ pub(super) fn run_mcts(
     }
 
     let mut iteration: u64 = 0;
+    loop {
+        if cancel.load(Ordering::Relaxed) { break; }
+        if tree.node_count() as u64 >= config.max_nodes { break; }
 
-    if use_batching {
-        // ── Batched MCTS loop (ONNX backend) ─────────────────────────────
-        loop {
-            if cancel.load(Ordering::Relaxed) { break; }
-            if tree.node_count() as u64 >= config.max_nodes { break; }
+        let (leaf_id, depth) = select(&tree, &config, &mut search_state);
 
-            let batch_size = config.batch_size
-                .min((config.max_nodes - tree.node_count() as u64) as usize);
+        let value = match expand_and_evaluate(
+            &mut tree, leaf_id, depth, &config, &mut engine, &mut maia,
+            cache.as_ref(), &mut cache_hits, &mut cache_misses,
+        ) {
+            Ok(value) => value,
+            Err(e) => { log::error!("Expand/evaluate error at iteration {iteration}: {e}"); break; }
+        };
 
-            // Phase 1: Select leaves with virtual loss for diversity.
-            // Track which leaves are already selected so we don't expand the same node twice.
-            let mut pending: Vec<PendingLeaf> = Vec::with_capacity(batch_size);
-            let mut selected_leaves: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        backpropagate(&mut tree, leaf_id, value);
+        iteration += 1;
 
-            for _ in 0..batch_size {
-                let (leaf_id, depth, path) = select_with_path(&tree, &config, &mut search_state);
-                apply_virtual_loss(&mut tree, &path);
-
-                // If this leaf was already selected in this batch, mark as duplicate
-                // so we backprop without expanding twice.
-                if !selected_leaves.insert(leaf_id) {
-                    pending.push(PendingLeaf { leaf_id, depth, path, prep: LeafPrep::Duplicate });
-                    continue;
-                }
-
-                let prep = match prepare_leaf(&mut tree, leaf_id, &config, cache.as_ref(), &mut cache_hits) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        revert_virtual_loss(&mut tree, &path);
-                        log::error!("Prepare error at iteration {iteration}: {e}");
-                        continue;
-                    }
-                };
-
-                pending.push(PendingLeaf { leaf_id, depth, path, prep });
-            }
-
-            // Phase 2: Collect positions that need NN evaluation.
-            let mut eval_indices: Vec<usize> = Vec::new();
-            let mut eval_move_seqs: Vec<String> = Vec::new();
-
-            for (i, p) in pending.iter().enumerate() {
-                if let LeafPrep::NeedsEval { move_seq, .. } = &p.prep {
-                    eval_indices.push(i);
-                    eval_move_seqs.push(move_seq.clone());
-                }
-            }
-
-            // Phase 3: Batch NN inference for all cache misses.
-            let batch_results = if !eval_move_seqs.is_empty() {
-                cache_misses += eval_move_seqs.len() as u64;
-                let move_seq_refs: Vec<&str> = eval_move_seqs.iter().map(|s| s.as_str()).collect();
-                match &mut backend {
-                    EvalBackend::Onnx { evaluator } => {
-                        match evaluator.evaluate_batch(&move_seq_refs) {
-                            Ok(results) => results,
-                            Err(e) => {
-                                // Revert all virtual losses and abort.
-                                for p in &pending {
-                                    revert_virtual_loss(&mut tree, &p.path);
-                                }
-                                log::error!("Batch eval error at iteration {iteration}: {e}");
-                                break;
-                            }
-                        }
-                    }
-                    _ => unreachable!("batching only used with ONNX backend"),
-                }
-            } else {
-                Vec::new()
-            };
-
-            // Phase 4: Revert virtual losses, expand, and backpropagate.
-            let mut eval_result_idx = 0;
-            for p in &pending {
-                revert_virtual_loss(&mut tree, &p.path);
-
-                let value = match &p.prep {
-                    LeafPrep::Ready { value } => *value,
-                    LeafPrep::Duplicate => {
-                        // Re-selected same leaf — use its current Q as backprop value.
-                        tree.get(p.leaf_id).map(|n| n.q_value()).unwrap_or(0.5)
-                    }
-                    LeafPrep::Cached { engine_eval, maia_policy, position } => {
-                        apply_eval_and_expand(
-                            &mut tree, p.leaf_id, p.depth, &config,
-                            engine_eval.clone(), maia_policy.clone(), position, cache.as_ref(),
-                        )
-                    }
-                    LeafPrep::NeedsEval { position, .. } => {
-                        let (engine_eval, maia_policy) = batch_results[eval_result_idx].clone();
-                        eval_result_idx += 1;
-                        apply_eval_and_expand(
-                            &mut tree, p.leaf_id, p.depth, &config,
-                            engine_eval, maia_policy, position, cache.as_ref(),
-                        )
-                    }
-                };
-
-                backpropagate(&mut tree, p.leaf_id, value);
-                iteration += 1;
-            }
-
-            if iteration % 100 < batch_size as u64 {
-                log_milestone(iteration, &tree, &config);
-            }
-
-            if iteration % (config.flush_interval as u64) < (batch_size as u64) {
-                flush_tree(cache.as_ref(), &tree, &session_id, iteration);
-            }
-
-            let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
-            if iteration % update_interval < batch_size as u64 || at_node_limit {
-                let elapsed = start_time.elapsed().as_secs_f64();
-                send_snapshot(&tree, &config, &sender, iteration, elapsed, &mut best_move_history, &mut q_history);
-            }
+        if iteration % 100 == 0 {
+            log_milestone(iteration, &tree, &config);
         }
-    } else {
-        // ── Sequential MCTS loop (lc0 backend or batch_size=1) ───────────
-        loop {
-            if cancel.load(Ordering::Relaxed) { break; }
-            if tree.node_count() as u64 >= config.max_nodes { break; }
 
-            let (leaf_id, depth) = select(&tree, &config, &mut search_state);
+        if iteration % config.flush_interval as u64 == 0 {
+            flush_tree(cache.as_ref(), &tree, &session_id, iteration);
+        }
 
-            let value = match expand_and_evaluate(
-                &mut tree, leaf_id, depth, &config, &mut backend,
-                cache.as_ref(), &mut cache_hits, &mut cache_misses,
-            ) {
-                Ok(value) => value,
-                Err(e) => { log::error!("Expand/evaluate error at iteration {iteration}: {e}"); break; }
-            };
-
-            backpropagate(&mut tree, leaf_id, value);
-            iteration += 1;
-
-            if iteration % 100 == 0 {
-                log_milestone(iteration, &tree, &config);
-            }
-
-            if iteration % config.flush_interval as u64 == 0 {
-                flush_tree(cache.as_ref(), &tree, &session_id, iteration);
-            }
-
-            let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
-            if iteration % update_interval == 0 || at_node_limit {
-                let elapsed = start_time.elapsed().as_secs_f64();
-                send_snapshot(&tree, &config, &sender, iteration, elapsed, &mut best_move_history, &mut q_history);
-            }
+        let at_node_limit = tree.node_count() as u64 >= config.max_nodes;
+        if iteration % update_interval == 0 || at_node_limit {
+            let elapsed = start_time.elapsed().as_secs_f64();
+            send_snapshot(&tree, &config, &sender, iteration, elapsed, &mut best_move_history, &mut q_history);
         }
     }
 
@@ -246,29 +112,21 @@ pub(super) fn run_mcts(
     }
 }
 
-fn init_backend(config: &Config) -> Result<EvalBackend, CoordinatorError> {
-    if config.onnx_configured() {
-        log::info!("Using direct ONNX inference backend");
-        let evaluator = NNEvaluator::new(&config.engine_onnx_path, &config.maia_onnx_path)
-            .map_err(|e| CoordinatorError::NN { source: e, move_sequence: String::new() })?;
-        Ok(EvalBackend::Onnx { evaluator })
-    } else {
-        log::info!("Using lc0 UCI process backend");
-        let engine = Engine::new(
-            &config.lc0_path,
-            &config.engine_weights_path,
-            config.nn_cache_size_mb,
-            config.ucinewgame_interval,
-        ).map_err(|e| CoordinatorError::Engine { source: e, move_sequence: String::new() })?;
+fn init_engines(config: &Config) -> Result<(Engine, MaiaEngine), CoordinatorError> {
+    let engine = Engine::new(
+        &config.lc0_path,
+        &config.engine_weights_path,
+        config.nn_cache_size_mb,
+        config.ucinewgame_interval,
+    ).map_err(|e| CoordinatorError::Engine { source: e, move_sequence: String::new() })?;
 
-        let maia = MaiaEngine::new(
-            &config.lc0_path,
-            &config.maia_weights_path,
-            config.ucinewgame_interval,
-        ).map_err(|e| CoordinatorError::Maia { source: e, move_sequence: String::new() })?;
+    let maia = MaiaEngine::new(
+        &config.lc0_path,
+        &config.maia_weights_path,
+        config.ucinewgame_interval,
+    ).map_err(|e| CoordinatorError::Maia { source: e, move_sequence: String::new() })?;
 
-        Ok(EvalBackend::Lc0 { engine, maia })
-    }
+    Ok((engine, maia))
 }
 
 fn load_or_create_tree(
