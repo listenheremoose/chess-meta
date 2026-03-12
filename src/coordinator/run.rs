@@ -302,7 +302,7 @@ pub(super) fn build_tree_snapshot(tree: &SearchTree, min_visits: u64) -> TreeSna
                         depth,
                     });
 
-                    if depth < 10 {
+                    if depth < 20 {
                         node.children.iter().for_each(|&child_id| {
                             stack.push((child_id, depth + 1));
                         });

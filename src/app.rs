@@ -162,7 +162,7 @@ impl App {
             Some(s) => s.tree_snapshot.as_ref(),
             None => None,
         };
-        let right_panel = tree_view::view(tree_snap, &self.tree_view_state, 10, 8);
+        let right_panel = tree_view::view(tree_snap, &self.tree_view_state, 10, 20);
 
         let main_panels = row![
             container(left_panel)
