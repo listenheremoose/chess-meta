@@ -228,7 +228,7 @@ fn multiple_backprops_accumulate() {
 fn select_returns_unexpanded_leaf() {
     let (tree, config) = build_test_tree();
     let mut state = SearchState::new();
-    let leaf = select(&tree, &config, &mut state);
+    let (leaf, _depth) = select(&tree, &config, &mut state);
     let node = tree.get(leaf).unwrap();
 
     // Selected node should be either unexpanded or have no children.
@@ -259,7 +259,7 @@ fn select_explores_unvisited_children() {
     }
 
     let mut state = SearchState::new();
-    let selected = select(&tree, &config, &mut state);
+    let (selected, _depth) = select(&tree, &config, &mut state);
     assert_eq!(selected, d4_id, "expected unvisited d4 to be selected");
 }
 

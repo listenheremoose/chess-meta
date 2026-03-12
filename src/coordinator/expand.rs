@@ -13,6 +13,7 @@ use super::CoordinatorError;
 pub(super) fn expand_and_evaluate(
     tree: &mut SearchTree,
     leaf_id: NodeId,
+    depth: u32,
     config: &Config,
     engine: &mut Engine,
     maia: &mut MaiaEngine,
@@ -76,10 +77,26 @@ pub(super) fn expand_and_evaluate(
         leaf.wdl = Some(engine_eval.wdl);
     }
 
-    let candidates = match node_type {
+    let mut candidates = match node_type {
         NodeType::Max => candidate_moves_max(&engine_eval.policy, &maia_policy, config),
         NodeType::Chance => candidate_moves_chance(&maia_policy, config),
     };
+
+    // Progressive narrowing: limit candidates at deeper nodes.
+    if config.width_decay < 1.0 && depth > 0 {
+        let effective_width = (config.max_width as f64 * config.width_decay.powi(depth as i32))
+            .floor() as usize;
+        let effective_width = effective_width.max(2);
+        if candidates.len() > effective_width {
+            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            candidates.truncate(effective_width);
+            // Re-normalize priors after truncation.
+            let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
+            if sum > 0.0 {
+                candidates.iter_mut().for_each(|(_, p)| *p /= sum);
+            }
+        }
+    }
 
     let child_type = match node_type {
         NodeType::Max => NodeType::Chance,

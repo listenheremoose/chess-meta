@@ -40,6 +40,13 @@ pub struct Config {
     pub engine_top_n: usize,
     pub maia_top_n: usize,
 
+    // ── Progressive narrowing ────────────────────────────────────────
+    /// Maximum candidate moves at root. Deeper nodes get fewer via width_decay.
+    pub max_width: usize,
+    /// Per-ply multiplier on max_width. E.g., 0.8 → depth 4 has max_width * 0.8^4 candidates.
+    /// 1.0 = no narrowing. Minimum 2 candidates always kept.
+    pub width_decay: f64,
+
     // ── lc0 process management ─────────────────────────────────────────
     pub nn_cache_size_mb: u32,
     pub ucinewgame_interval: u32,
@@ -58,7 +65,7 @@ impl Default for Config {
             cpuct_init: 10.0,
             cpuct_base: 19652.0,
             cpuct_factor: 1.0,
-            cpuct_depth_decay: 0.1,
+            cpuct_depth_decay: 1.0,
             fpu_reduction: 0.3,
             alpha: 0.7,
 
@@ -75,6 +82,9 @@ impl Default for Config {
 
             engine_top_n: 999,
             maia_top_n: 5,
+
+            max_width: 10,
+            width_decay: 0.5,
 
             nn_cache_size_mb: 512,
             ucinewgame_interval: 500,
@@ -133,7 +143,7 @@ mod tests {
     #[test]
     fn defaults_match_documented_parameters() {
         let config = Config::default();
-        assert!((config.cpuct_init - 1.5).abs() < 0.001);
+        assert!((config.cpuct_init - 10.0).abs() < 0.001);
         assert!((config.cpuct_base - 19652.0).abs() < 1.0);
         assert!((config.cpuct_factor - 1.0).abs() < 0.001);
         assert!((config.cpuct_depth_decay - 1.0).abs() < 0.001);
@@ -145,9 +155,11 @@ mod tests {
         assert_eq!(config.engine_nodes, 1);
         assert!((config.contempt - 0.6).abs() < 0.001);
         assert!((config.safety - 0.2).abs() < 0.001);
-        assert_eq!(config.max_nodes, 150_000);
+        assert_eq!(config.max_nodes, 1_000_000);
         assert_eq!(config.engine_top_n, 999);
         assert_eq!(config.maia_top_n, 5);
+        assert_eq!(config.max_width, 10);
+        assert!((config.width_decay - 0.8).abs() < 0.001);
         assert_eq!(config.nn_cache_size_mb, 512);
         assert_eq!(config.ucinewgame_interval, 500);
     }
@@ -199,7 +211,7 @@ mod tests {
         assert_eq!(config.lc0_path, "/usr/bin/lc0");
         assert_eq!(config.max_nodes, 200_000);
         // Other fields should have defaults
-        assert!((config.cpuct_init - 1.5).abs() < 0.001);
+        assert!((config.cpuct_init - 10.0).abs() < 0.001);
         assert_eq!(config.engine_top_n, 999);
     }
 }

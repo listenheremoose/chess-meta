@@ -60,10 +60,10 @@ pub(super) fn run_mcts(
         if cancel.load(Ordering::Relaxed) { break; }
         if tree.node_count() as u64 >= config.max_nodes { break; }
 
-        let leaf_id = select(&tree, &config, &mut search_state);
+        let (leaf_id, depth) = select(&tree, &config, &mut search_state);
 
         let value = match expand_and_evaluate(
-            &mut tree, leaf_id, &config, &mut engine, &mut maia,
+            &mut tree, leaf_id, depth, &config, &mut engine, &mut maia,
             cache.as_ref(), &mut cache_hits, &mut cache_misses,
         ) {
             Ok(value) => value,

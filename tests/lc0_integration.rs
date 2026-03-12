@@ -230,7 +230,7 @@ fn search_tree_with_real_engines() {
 
     for _iter in 0..iterations {
         // 1. Select
-        let leaf_id = select(&tree, &config, &mut search_state);
+        let (leaf_id, _depth) = select(&tree, &config, &mut search_state);
         let leaf = tree.get(leaf_id).unwrap();
 
         if leaf.expanded {

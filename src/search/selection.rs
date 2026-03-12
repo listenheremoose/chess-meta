@@ -4,7 +4,8 @@ use super::{NodeId, NodeType, SearchState, SearchTree};
 
 /// Select a leaf node from the tree using PUCT at MAX nodes and
 /// probability-weighted sampling at CHANCE nodes.
-pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> NodeId {
+/// Returns (leaf_id, depth) so the caller can pass depth to expansion.
+pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> (NodeId, u32) {
     let mut current = tree.root_id;
     let mut depth = 0u32;
 
@@ -14,7 +15,7 @@ pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> No
         if !node.expanded || node.children.is_empty() {
             #[cfg(feature = "search-trace")]
             log::trace!("select leaf node_id={:?} depth={depth}", current);
-            return current;
+            return (current, depth);
         }
 
         match node.node_type {
@@ -338,9 +339,10 @@ mod tests {
 
         let config = Config::default();
         let mut state = SearchState::new();
-        let leaf = select(&tree, &config, &mut state);
+        let (leaf, depth) = select(&tree, &config, &mut state);
         assert_ne!(leaf, NodeId(0));
         assert!(!tree.get(leaf).unwrap().expanded);
+        assert_eq!(depth, 1);
     }
 
     #[test]
@@ -348,7 +350,8 @@ mod tests {
         let tree = TreeBuilder::new().build();
         let config = Config::default();
         let mut state = SearchState::new();
-        let leaf = select(&tree, &config, &mut state);
+        let (leaf, depth) = select(&tree, &config, &mut state);
         assert_eq!(leaf, NodeId(0));
+        assert_eq!(depth, 0);
     }
 }
