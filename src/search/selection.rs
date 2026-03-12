@@ -6,7 +6,6 @@ use super::{NodeId, NodeType, SearchState, SearchTree};
 /// probability-weighted sampling at CHANCE nodes.
 pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> NodeId {
     let mut current = tree.root_id;
-    #[cfg(feature = "search-trace")]
     let mut depth = 0u32;
 
     loop {
@@ -20,27 +19,28 @@ pub fn select(tree: &SearchTree, config: &Config, state: &mut SearchState) -> No
 
         match node.node_type {
             NodeType::Max => {
-                current = select_puct(tree, current, config);
+                current = select_puct(tree, current, config, depth);
             }
             NodeType::Chance => {
                 current = select_chance(tree, current, config, state);
             }
         }
-        #[cfg(feature = "search-trace")]
-        { depth += 1; }
+        depth += 1;
     }
 }
 
 /// PUCT selection at a MAX node. Picks the child with the highest UCB score,
 /// converting stored White-perspective Q values to side-to-move perspective.
-fn select_puct(tree: &SearchTree, node_id: NodeId, config: &Config) -> NodeId {
+fn select_puct(tree: &SearchTree, node_id: NodeId, config: &Config, depth: u32) -> NodeId {
     let node = &tree.nodes[node_id.index()];
     let parent_visits = node.visit_count as f64;
     let is_white_turn = super::is_white_to_move_from_node(node);
 
-    // Dynamic cpuct: C(s) = cpuct_init + cpuct_factor * ln((N(s) + cpuct_base) / cpuct_base)
-    let cpuct = config.cpuct_init
-        + config.cpuct_factor * ((parent_visits + config.cpuct_base) / config.cpuct_base).ln();
+    // Dynamic cpuct: C(s) = (cpuct_init + cpuct_factor * ln((N(s) + cpuct_base) / cpuct_base))
+    //                       * cpuct_depth_decay ^ depth
+    let cpuct = (config.cpuct_init
+        + config.cpuct_factor * ((parent_visits + config.cpuct_base) / config.cpuct_base).ln())
+        * config.cpuct_depth_decay.powi(depth as i32);
 
     let parent_q = node.q_value();
 
@@ -146,7 +146,7 @@ mod tests {
             .build();
 
         let config = Config::default();
-        let selected = select_puct(&tree, NodeId(0), &config);
+        let selected = select_puct(&tree, NodeId(0), &config, 0);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         assert_eq!(selected_move, Some("e2e4"));
     }
@@ -165,7 +165,7 @@ mod tests {
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, NodeId(0), &config);
+        let selected = select_puct(&tree, NodeId(0), &config, 0);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         assert_eq!(selected_move, Some("d2d4"));
     }
@@ -184,7 +184,7 @@ mod tests {
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, NodeId(0), &config);
+        let selected = select_puct(&tree, NodeId(0), &config, 0);
         assert_eq!(tree.get(selected).unwrap().move_uci.as_deref(), Some("e2e4"));
     }
 
@@ -202,7 +202,7 @@ mod tests {
         }
 
         let config = Config::default();
-        let selected = select_puct(&tree, NodeId(0), &config);
+        let selected = select_puct(&tree, NodeId(0), &config, 0);
         let selected_move = tree.get(selected).unwrap().move_uci.as_deref();
         assert_eq!(selected_move, Some("e7e5")); // Q_white=0.3 → Q_black=0.7
     }
@@ -288,6 +288,46 @@ mod tests {
             .count();
         assert!(d5_count > 50, "d5_count was {d5_count}, floor should guarantee >0.5% even with sharpening");
     }
+
+    #[test]
+    fn puct_depth_decay_reduces_exploration_at_depth() {
+        // Two children: e2e4 heavily visited with Q=0.6, d2d4 unvisited (FPU).
+        // Without decay the exploration bonus on d2d4 wins. With decay=0.0
+        // cpuct collapses to 0, so the visited e2e4 wins on Q alone.
+        let make_tree = || {
+            let mut tree = TreeBuilder::new()
+                .with_child(NodeId(0), "e2e4", NodeType::Chance, 0.5, 100, 0.6)
+                .with_child(NodeId(0), "d2d4", NodeType::Chance, 0.5, 0, 0.0)
+                .expanded(NodeId(0))
+                .build();
+            {
+                let root = tree.get_mut(NodeId(0)).unwrap();
+                root.visit_count = 100;
+                root.total_value = 60.0;
+            }
+            tree
+        };
+
+        let move_of = |tree: &crate::search::SearchTree, id: NodeId| -> String {
+            tree.get(id).unwrap().move_uci.clone().unwrap_or_default()
+        };
+
+        // decay=1.0: exploration bonus active, unvisited d2d4 wins
+        let mut config = Config::default();
+        config.cpuct_depth_decay = 1.0;
+        let tree = make_tree();
+        let selected = select_puct(&tree, NodeId(0), &config, 5);
+        assert_eq!(move_of(&tree, selected), "d2d4",
+            "with decay=1.0, exploration should win");
+
+        // decay=0.0: cpuct=0, no exploration bonus, visited e2e4 wins on Q
+        config.cpuct_depth_decay = 0.0;
+        let tree2 = make_tree();
+        let selected = select_puct(&tree2, NodeId(0), &config, 5);
+        assert_eq!(move_of(&tree2, selected), "e2e4",
+            "with decay=0.0, exploitation wins (no exploration bonus)");
+    }
+
 
     #[test]
     fn select_returns_unexpanded_leaf() {

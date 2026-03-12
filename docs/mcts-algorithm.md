@@ -26,13 +26,15 @@ Where:
 
 ### Exploration constant C
 
-Use lc0's dynamic cpuct formula:
-
 ```
-C(s) = cpuct_init + cpuct_factor * ln((N(s) + cpuct_base) / cpuct_base)
+C(s) = [cpuct_init + cpuct_factor * ln((N(s) + cpuct_base) / cpuct_base)]
+       * cpuct_depth_decay ^ depth(s)
 ```
 
-The logarithmic growth ensures that as a node accumulates thousands of visits, exploration gradually increases, preventing premature convergence.
+The logarithmic term (adapted from lc0) grows with visit count, preventing premature convergence.
+The depth decay multiplies the whole constant by `cpuct_depth_decay^depth`, so shallower nodes
+explore broadly while deeper nodes exploit more. `cpuct_depth_decay = 1.0` (default) disables the
+decay and matches lc0's original formula exactly.
 
 ### Prior P(s, a) at MAX nodes
 

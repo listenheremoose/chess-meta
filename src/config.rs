@@ -5,34 +5,46 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    // ── Engine paths ────────────────────────────────────────────────────
     pub lc0_path: String,
     pub engine_weights_path: String,
     pub maia_weights_path: String,
 
+    // ── PUCT / Exploration ──────────────────────────────────────────────
     pub cpuct_init: f64,
     pub cpuct_base: f64,
     pub cpuct_factor: f64,
+    /// Exponential decay applied to cpuct by tree depth: C *= cpuct_depth_decay^depth.
+    /// 1.0 = no decay (default). < 1.0 = exploit more at deeper nodes.
+    pub cpuct_depth_decay: f64,
     pub fpu_reduction: f64,
     /// Prior blend: alpha * engine_policy + (1-alpha) * maia_policy
     pub alpha: f64,
 
+    // ── Maia / Opponent modeling ────────────────────────────────────────
     pub maia_temperature: f64,
     pub maia_floor: f64,
     pub maia_min_prob: f64,
 
+    // ── Evaluation ─────────────────────────────────────────────────────
     pub engine_nodes: u64,
     pub contempt: f64,
 
+    // ── Final move selection ───────────────────────────────────────────
     pub safety: f64,
 
+    // ── Search budget ──────────────────────────────────────────────────
     pub max_nodes: u64,
 
+    // ── Candidate selection ────────────────────────────────────────────
     pub engine_top_n: usize,
     pub maia_top_n: usize,
 
+    // ── lc0 process management ─────────────────────────────────────────
     pub nn_cache_size_mb: u32,
     pub ucinewgame_interval: u32,
 
+    // ── Persistence ────────────────────────────────────────────────────
     pub flush_interval: u32,
 }
 
@@ -43,9 +55,10 @@ impl Default for Config {
             engine_weights_path: String::new(),
             maia_weights_path: String::new(),
 
-            cpuct_init: 1.5,
+            cpuct_init: 2.0,
             cpuct_base: 19652.0,
             cpuct_factor: 1.0,
+            cpuct_depth_decay: 0.85,
             fpu_reduction: 0.3,
             alpha: 0.7,
 
@@ -115,12 +128,15 @@ impl Config {
 mod tests {
     use super::Config;
 
+    // -- Default Values --
+
     #[test]
     fn defaults_match_documented_parameters() {
         let config = Config::default();
         assert!((config.cpuct_init - 1.5).abs() < 0.001);
         assert!((config.cpuct_base - 19652.0).abs() < 1.0);
         assert!((config.cpuct_factor - 1.0).abs() < 0.001);
+        assert!((config.cpuct_depth_decay - 1.0).abs() < 0.001);
         assert!((config.fpu_reduction - 0.3).abs() < 0.001);
         assert!((config.alpha - 0.7).abs() < 0.001);
         assert!((config.maia_temperature - 1.0).abs() < 0.001);
@@ -135,6 +151,8 @@ mod tests {
         assert_eq!(config.nn_cache_size_mb, 512);
         assert_eq!(config.ucinewgame_interval, 500);
     }
+
+    // -- Engine Path Validation --
 
     #[test]
     fn engine_paths_configured_returns_false_when_empty() {
@@ -158,6 +176,8 @@ mod tests {
         // engine_weights_path and maia_weights_path still empty
         assert!(!config.engine_paths_configured());
     }
+
+    // -- Serialization --
 
     #[test]
     fn config_roundtrips_through_toml() {

@@ -26,10 +26,8 @@ Before adding a crate, it must be:
 - `serde` + `serde_json` — serialization for cache storage and config
 - `rand` — weighted random sampling for Maia distributions at CHANCE nodes
 - `toml` — config file parsing/writing
-- `dirs` — platform-standard config/data directory paths
 - `log` + `simplelog` — structured logging
 - `criterion` — benchmarking (dev-dependency)
-- `insta` — snapshot testing (dev-dependency)
 
 All other dependencies require explicit justification.
 

@@ -9,6 +9,7 @@ All tunable constants with defaults, valid ranges, and rationale.
 | cpuct_init | 1.5 | 0.5 - 5.0 | Base exploration constant. Adapted from lc0's 3.0 on [-1,1] range, halved for [0,1]. |
 | cpuct_base | 19652 | 1000 - 100000 | Logarithmic growth base for dynamic cpuct. Matches lc0 default. |
 | cpuct_factor | 1.0 | 0.0 - 5.0 | Logarithmic growth multiplier. Adapted from lc0's 2.0, halved for [0,1]. |
+| cpuct_depth_decay | 1.0 | 0.0 - 1.0 | Exponential decay on cpuct by tree depth: `C *= decay^depth`. 1.0 = no decay (lc0 default behavior). Values like 0.85-0.95 give broad exploration near the root and exploitation in deep lines. |
 | fpu_reduction | 0.3 | 0.0 - 1.0 | FPU penalty for unvisited children. Smaller than lc0's 0.6 (scaled) because our evals are more reliable at low visit counts. |
 | alpha (prior blend) | 0.7 | 0.0 - 1.0 | Weight of engine policy vs Maia policy in blended prior at MAX nodes. 1.0 = pure engine, 0.0 = pure Maia. |
 
