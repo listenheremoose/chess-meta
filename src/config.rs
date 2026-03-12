@@ -55,10 +55,10 @@ impl Default for Config {
             engine_weights_path: String::new(),
             maia_weights_path: String::new(),
 
-            cpuct_init: 2.0,
+            cpuct_init: 10.0,
             cpuct_base: 19652.0,
             cpuct_factor: 1.0,
-            cpuct_depth_decay: 0.85,
+            cpuct_depth_decay: 0.1,
             fpu_reduction: 0.3,
             alpha: 0.7,
 
@@ -71,7 +71,7 @@ impl Default for Config {
 
             safety: 0.2,
 
-            max_nodes: 150_000,
+            max_nodes: 1_000_000,
 
             engine_top_n: 999,
             maia_top_n: 5,
