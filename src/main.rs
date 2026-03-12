@@ -4,6 +4,7 @@ mod config;
 mod coordinator;
 mod engine;
 mod maia;
+mod nn;
 mod position;
 mod search;
 mod ui;

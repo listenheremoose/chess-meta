@@ -1,5 +1,27 @@
 use super::{NodeId, SearchTree};
 
+/// Virtual loss value — pessimistic for White, makes path less attractive.
+const VIRTUAL_LOSS: f64 = 0.0;
+
+/// Apply virtual loss along a path to discourage re-selection during batched search.
+/// Increments visit count and adds a pessimistic value at each node on the path.
+pub fn apply_virtual_loss(tree: &mut SearchTree, path: &[NodeId]) {
+    for &id in path {
+        let node = &mut tree.nodes[id.index()];
+        node.visit_count += 1;
+        node.total_value += VIRTUAL_LOSS;
+    }
+}
+
+/// Revert virtual loss along a path after batch evaluation completes.
+pub fn revert_virtual_loss(tree: &mut SearchTree, path: &[NodeId]) {
+    for &id in path {
+        let node = &mut tree.nodes[id.index()];
+        node.visit_count -= 1;
+        node.total_value -= VIRTUAL_LOSS;
+    }
+}
+
 /// Backpropagate a value (from White's perspective) up the tree.
 pub fn backpropagate(tree: &mut SearchTree, leaf_id: NodeId, value_white: f64) {
     #[cfg(feature = "search-trace")]

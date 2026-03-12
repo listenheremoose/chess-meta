@@ -46,6 +46,7 @@ pub(super) enum CoordinatorError {
     Position { source: crate::position::PositionError, move_sequence: String },
     Engine { source: crate::engine::EngineError, move_sequence: String },
     Maia { source: crate::maia::MaiaError, move_sequence: String },
+    NN { source: crate::nn::NNError, move_sequence: String },
     NodeNotFound { node_id: NodeId },
 }
 
@@ -58,6 +59,8 @@ impl std::fmt::Display for CoordinatorError {
                 write!(f, "Engine error for '{move_sequence}': {source}"),
             Self::Maia { source, move_sequence } =>
                 write!(f, "Maia error for '{move_sequence}': {source}"),
+            Self::NN { source, move_sequence } =>
+                write!(f, "NN error for '{move_sequence}': {source}"),
             Self::NodeNotFound { node_id } =>
                 write!(f, "Node {:?} not found in tree", node_id),
         }
