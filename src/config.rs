@@ -67,7 +67,7 @@ impl Default for Config {
             cpuct_factor: 1.0,
             cpuct_depth_decay: 1.0,
             fpu_reduction: 0.3,
-            alpha: 0.7,
+            alpha: 0.3,
 
             maia_temperature: 1.0,
             maia_floor: 0.01,
@@ -83,8 +83,8 @@ impl Default for Config {
             engine_top_n: 999,
             maia_top_n: 5,
 
-            max_width: 10,
-            width_decay: 0.5,
+            max_width: 7,
+            width_decay: 0.7,
 
             nn_cache_size_mb: 512,
             ucinewgame_interval: 500,

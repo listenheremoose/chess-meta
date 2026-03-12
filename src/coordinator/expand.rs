@@ -82,19 +82,17 @@ pub(super) fn expand_and_evaluate(
         NodeType::Chance => candidate_moves_chance(&maia_policy, config),
     };
 
-    // Progressive narrowing: limit candidates at deeper nodes.
-    if config.width_decay < 1.0 && depth > 0 {
-        let effective_width = (config.max_width as f64 * config.width_decay.powi(depth as i32))
-            .floor() as usize;
-        let effective_width = effective_width.max(2);
-        if candidates.len() > effective_width {
-            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            candidates.truncate(effective_width);
-            // Re-normalize priors after truncation.
-            let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
-            if sum > 0.0 {
-                candidates.iter_mut().for_each(|(_, p)| *p /= sum);
-            }
+    // Progressive narrowing: limit candidates based on max_width and depth decay.
+    let effective_width = (config.max_width as f64 * config.width_decay.powi(depth as i32))
+        .floor() as usize;
+    let effective_width = effective_width.max(2);
+    if candidates.len() > effective_width {
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(effective_width);
+        // Re-normalize priors after truncation.
+        let sum: f64 = candidates.iter().map(|(_, p)| p).sum();
+        if sum > 0.0 {
+            candidates.iter_mut().for_each(|(_, p)| *p /= sum);
         }
     }
 

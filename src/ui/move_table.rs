@@ -23,7 +23,7 @@ pub fn view<'a>(
     let mut rows: Vec<Element<'a, Message>> = vec![header.into()];
 
     let mut sorted_moves: Vec<&RootMoveInfo> = moves.iter().collect();
-    sorted_moves.sort_by(|a, b| b.visits.cmp(&a.visits));
+    sorted_moves.sort_by(|a, b| b.practical_q.partial_cmp(&a.practical_q).unwrap_or(std::cmp::Ordering::Equal));
 
     sorted_moves.iter().for_each(|info| {
         let is_selected = selected_move == Some(&info.uci_move);
