@@ -78,7 +78,7 @@ impl Default for Config {
 
             safety: 0.2,
 
-            max_nodes: 1_000_000,
+            max_nodes: 150_000,
 
             engine_top_n: 999,
             maia_top_n: 5,
