@@ -107,7 +107,7 @@ fn move_detail(info: &RootMoveInfo) -> Option<Element<'_, Message>> {
     let mut details = Vec::new();
 
     details.push(
-        text(format!("Q (White): {:.4}", info.q_white))
+        text(format!("Expected Q: {:.4}", info.practical_q))
             .size(12)
             .color(colors::TEXT)
             .into(),

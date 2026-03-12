@@ -15,7 +15,6 @@ pub struct RootMoveInfo {
     pub practical_q: f64,
     /// Difference between practical Q and position's engine eval.
     pub delta: Option<f64>,
-    pub q_white: f64,
     pub worst_case: f64,
     pub wdl: Option<(u32, u32, u32)>,
 }
@@ -26,7 +25,8 @@ pub fn root_move_infos(tree: &SearchTree, config: &Config) -> Vec<RootMoveInfo> 
     let is_white = super::is_white_to_move_from_node(root);
 
     let engine_position_value = root.wdl.map(|(wins, draws, _)| {
-        wins as f64 / 1000.0 + config.contempt * draws as f64 / 1000.0
+        let v_white = wins as f64 / 1000.0 + config.contempt * draws as f64 / 1000.0;
+        if is_white { v_white } else { 1.0 - v_white }
     });
 
     let mut move_infos: Vec<RootMoveInfo> = root
@@ -54,8 +54,10 @@ fn build_root_move_info(
     let child = tree.get(child_id)?;
     let uci_move = child.move_uci.as_ref()?.clone();
     let visits = child.visit_count;
-    let q_white = child.q_value();
-    let q_stm = if is_white { q_white } else { 1.0 - q_white };
+    let q_stm = {
+        let q_white = child.q_value();
+        if is_white { q_white } else { 1.0 - q_white }
+    };
 
     let engine_pol = match root.engine_policy.as_ref() {
         Some(engine_policy) => match lookup_castling_aware(&uci_move, engine_policy) {
@@ -81,7 +83,6 @@ fn build_root_move_info(
         engine_policy: engine_pol,
         practical_q,
         delta,
-        q_white,
         worst_case,
         wdl: child.wdl,
     })
